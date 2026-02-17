@@ -80,6 +80,11 @@ TEST_CASE_METHOD(CoreTestFixture, "registerClass") {
     result = engine->eval(v8kit::String::newString("ScriptClass.name"));
     REQUIRE(result.isString());
     REQUIRE(result.asString().getValue() == "bar");
+
+    // ensure toStringTag
+    result = engine->eval(v8kit::String::newString("Object.prototype.toString.call(ScriptClass)"));
+    REQUIRE(result.isString());
+    REQUIRE(result.asString().getValue() == "[object ScriptClass]");
 }
 
 
@@ -113,6 +118,11 @@ TEST_CASE_METHOD(CoreTestFixture, "registerEnum") {
     result = engine->eval(v8kit::String::newString("Color.Blue"));
     REQUIRE(result.isNumber());
     REQUIRE(result.asNumber().getInt32() == static_cast<int64_t>(Color::Blue));
+
+    // ensure toStringTag
+    result = engine->eval(v8kit::String::newString("Object.prototype.toString.call(Color)"));
+    REQUIRE(result.isString());
+    REQUIRE(result.asString().getValue() == "[object Color]");
 
     // ensure $name don't enumerate
     auto ensure = v8kit::Function::newFunction([](v8kit::Arguments const& arguments) -> v8kit::Local<v8kit::Value> {
