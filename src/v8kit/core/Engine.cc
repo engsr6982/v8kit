@@ -157,7 +157,7 @@ ClassMeta const* Engine::getClassDefine(std::type_index typeId) const {
 
 Local<Function> Engine::registerClass(ClassMeta const& meta) {
     if (registeredClasses_.contains(meta.name_)) {
-        throw Exception("Class already registered: " + meta.name_);
+        throw std::logic_error("Class already registered: " + meta.name_);
     }
 
     v8::TryCatch vtry(isolate_);
@@ -202,6 +202,26 @@ Local<Function> Engine::registerClass(ClassMeta const& meta) {
     return myFunction;
 }
 
+Local<Object> Engine::registerEnum(EnumMeta const& meta) {
+    if (registeredEnums_.contains(meta.name_)) {
+        throw std::logic_error("Enum already registered: " + meta.name_);
+    }
+
+    auto object = Object::newObject();
+    for (auto const& [name, value] : meta.entries_) {
+        object.set(String::newString(name), Number::newNumber(static_cast<double>(value)));
+    }
+
+    auto v8Object = ValueHelper::unwrap(object);
+    setToStringTag(v8Object, meta.name_);
+
+    registeredEnums_.emplace(meta.name_, &meta);
+
+    globalThis().set(String::newString(meta.name_), object);
+    return object;
+}
+
+
 bool Engine::isInstanceOf(Local<Object> const& obj, ClassMeta const& meta) const {
     auto iter = classConstructors_.find(&meta);
     if (iter == classConstructors_.end()) {
@@ -211,11 +231,11 @@ bool Engine::isInstanceOf(Local<Object> const& obj, ClassMeta const& meta) const
     return ctor->HasInstance(ValueHelper::unwrap(obj));
 }
 
-Local<Object> Engine::newInstance(ClassMeta const& def, std::unique_ptr<NativeInstance>&& instance) {
-    auto iter = classConstructors_.find(&def);
+Local<Object> Engine::newInstance(ClassMeta const& meta, std::unique_ptr<NativeInstance>&& instance) {
+    auto iter = classConstructors_.find(&meta);
     if (iter == classConstructors_.end()) {
         [[unlikely]] throw std::logic_error{
-            "The native class " + def.name_ + " is not registered, so an instance cannot be constructed."
+            "The native class " + meta.name_ + " is not registered, so an instance cannot be constructed."
         };
     }
 

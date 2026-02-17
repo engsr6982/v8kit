@@ -1,5 +1,4 @@
 #pragma once
-#include "Concepts.h"
 #include "Fwd.h"
 #include "v8kit/Macro.h"
 
@@ -9,6 +8,7 @@
 namespace v8kit {
 
 struct ClassMeta; // forward declaration
+struct EnumMeta;
 namespace internal {
 class V8EscapeScope;
 }
@@ -63,9 +63,11 @@ public:
      */
     Local<Function> registerClass(ClassMeta const& meta);
 
+    Local<Object> registerEnum(EnumMeta const& meta);
+
     [[nodiscard]] ClassMeta const* getClassDefine(std::type_index typeId) const;
 
-    Local<Object> newInstance(ClassMeta const& def, std::unique_ptr<NativeInstance>&& instance);
+    Local<Object> newInstance(ClassMeta const& meta, std::unique_ptr<NativeInstance>&& instance);
 
     [[nodiscard]] bool isInstanceOf(Local<Object> const& obj, ClassMeta const& meta) const;
 
@@ -118,6 +120,8 @@ private:
     std::unordered_map<ClassMeta const*, v8::Global<v8::FunctionTemplate>> classConstructors_;
 
     std::unordered_map<std::type_index, ClassMeta const*> typeMapping_;
+
+    std::unordered_map<std::string, EnumMeta const*> registeredEnums_;
 };
 
 
