@@ -1,10 +1,13 @@
 #include "v8kit/core/Engine.h"
 #include "v8kit/core/EngineScope.h"
+#include "v8kit/core/Exception.h"
+#include "v8kit/core/MetaInfo.h"
 #include "v8kit/core/Reference.h"
 #include "v8kit/core/Value.h"
 
 #include "catch2/catch_test_macros.hpp"
-#include "v8kit/core/MetaInfo.h"
+#include "catch2/matchers/catch_matchers.hpp"
+#include "catch2/matchers/catch_matchers_exception.hpp"
 
 struct CoreTestFixture {
     std::unique_ptr<v8kit::Engine> engine;
@@ -133,4 +136,30 @@ TEST_CASE_METHOD(CoreTestFixture, "registerEnum") {
     });
     engine->globalThis().set(v8kit::String::newString("ensure"), ensure);
     engine->eval(v8kit::String::newString("for (let key in Color) { ensure(key) }"));
+}
+
+
+TEST_CASE_METHOD(CoreTestFixture, "Exception pass-through") {
+    v8kit::EngineScope scope{engine.get()};
+
+    REQUIRE_THROWS_MATCHES(
+        engine->eval(v8kit::String::newString("throw new Error('abc')")),
+        v8kit::Exception,
+        Catch::Matchers::Message("Uncaught Error: abc")
+    );
+
+    static constexpr auto msg = "Cpp layer throw exception";
+    auto thowr  = v8kit::Function::newFunction([](v8kit::Arguments const& arguments) -> v8kit::Local<v8kit::Value> {
+        throw v8kit::Exception{msg};
+    });
+    auto ensure = v8kit::Function::newFunction([](v8kit::Arguments const& arguments) -> v8kit::Local<v8kit::Value> {
+        REQUIRE(arguments.length() == 1);
+        REQUIRE(arguments[0].isString());
+        REQUIRE(arguments[0].asString().getValue() == msg);
+        return {};
+    });
+    engine->globalThis().set(v8kit::String::newString("throwr"), thowr);
+    engine->globalThis().set(v8kit::String::newString("ensure"), ensure);
+
+    engine->eval(v8kit::String::newString("try { throwr() } catch (e) { ensure(e.message) }"));
 }
