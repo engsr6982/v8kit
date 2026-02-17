@@ -329,4 +329,4 @@ private:
 
 } // namespace v8kit
 
-#include "Reference.inl"
+#include "Reference.inl" // NOLINT

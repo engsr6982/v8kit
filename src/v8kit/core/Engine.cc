@@ -212,6 +212,12 @@ Local<Object> Engine::registerEnum(EnumMeta const& meta) {
         object.set(String::newString(name), Number::newNumber(static_cast<double>(value)));
     }
 
+    (void)object.defineOwnProperty(
+        String::newString("$name"),
+        String::newString(meta.name_),
+        PropertyAttribute::DontEnum | PropertyAttribute::DontDelete | PropertyAttribute::ReadOnly
+    );
+
     auto v8Object = ValueHelper::unwrap(object);
     setToStringTag(v8Object, meta.name_);
 
