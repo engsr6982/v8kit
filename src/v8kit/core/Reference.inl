@@ -1,7 +1,7 @@
 #pragma once
 #include "Engine.h"
 #include "EngineScope.h"
-#include "Reference.h"
+#include "Reference.h" // NOLINT
 #include "ValueHelper.h"
 
 #include <stdexcept>
