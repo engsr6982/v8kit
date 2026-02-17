@@ -58,3 +58,10 @@ using InstanceSetterCallback = std::function<void(InstancePayload&, Arguments co
 
 
 } // namespace v8kit
+
+inline v8kit::PropertyAttribute operator|(v8kit::PropertyAttribute lhs, v8kit::PropertyAttribute rhs) {
+    return static_cast<v8kit::PropertyAttribute>(static_cast<uint32_t>(lhs) | static_cast<uint32_t>(rhs));
+}
+inline v8kit::PropertyAttribute operator&(v8kit::PropertyAttribute lhs, v8kit::PropertyAttribute rhs) {
+    return static_cast<v8kit::PropertyAttribute>(static_cast<uint32_t>(lhs) & static_cast<uint32_t>(rhs));
+}
