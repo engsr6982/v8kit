@@ -32,5 +32,9 @@ inline constexpr size_t size_of_v = sizeof(T);
 template <>
 inline constexpr size_t size_of_v<void> = 0;
 
+template <typename T>
+inline constexpr bool isFunctionCallback =
+    std::is_invocable_r_v<Local<Value>, T, Arguments const&> || std::convertible_to<T, v8kit::FunctionCallback>;
+
 
 } // namespace v8kit::binding::traits
