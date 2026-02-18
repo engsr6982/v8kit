@@ -6,43 +6,42 @@ namespace v8kit {
 
 enum class ReturnValuePolicy : uint8_t {
     /**
-     * @brief 自动推导 (默认)
-     * - 指针 (T*) -> Reference (JS 引用 C++ 指针，不管理生命周期)
-     * - 左值引用 (T&) -> Copy (JS 拷贝一份新的 C++ 对象)
-     * - 右值 (T&&) -> Move (JS 接管 C++ 对象)
+     * 当返回值为指针时，回退到 ReturnValuePolicy::kTakeOwnership；
+     * 对于右值引用和左值引用，则分别使用 ReturnValuePolicy::kMove 和 ReturnValuePolicy::kCopy。
+     * 各策略的具体行为见下文说明。这是默认策略。
      */
     kAutomatic = 0,
 
     /**
-     * @brief 强制拷贝
-     * - 无论是指针还是引用，都在 JS 侧 new 一个新对象并拷贝数据。
+     * @brief 创建返回对象的新副本，该副本归 Js 所有。
+     * 此策略相对安全，因为两个实例的生命周期相互解耦。
      */
     kCopy = 1,
 
     /**
-     * @brief 强制移动
-     * - 移动构造新对象，原 C++ 对象失效。
+     * @brief 使用 `std::move` 将返回值的内容移动到新实例中，新实例归 JS 所有。
+     * 此策略相对安全，因为源实例（被移动方）和目标实例（接收方）的生命周期相互解耦。
      */
     kMove = 2,
 
     /**
-     * @brief 引用 (危险视图)
-     * - JS 仅持有 C++ 指针。JS 不负责销毁，且不保活父对象。
-     * - 仅当你确定 C++ 对象是全局单例或生命周期长于 JS 环境时使用。
+     * @brief 引用现有对象，但不取得其所有权。对象的生命周期管理及不再使用时的内存释放由 C++ 侧负责。
+     * @note 警告：若 C++ 侧销毁了仍被 JS 引用和使用的对象，将导致未定义行为。
      */
     kReference = 3,
 
     /**
-     * @brief 接管所有权
-     * - C++ 返回一个指针，JS 接管它，JS 对象销毁时 delete C++ 指针。
+     * @brief 引用现有对象（即不创建新副本）并取得其所有权。
+     * 当对象的引用计数归零时，Js 会调用析构函数和 delete 运算符。
+     * 若 C++ 侧也执行同样的销毁操作，或数据并非动态分配，将导致未定义行为。
      */
     kTakeOwnership = 4,
 
     /**
-     * @brief 内部引用 (保活父对象)
-     * - JS 持有 C++ 指针 (View)。
-     * - 同时，JS 子对象会强引用 JS 父对象 (this)。
-     * - 防止父对象被 GC 导致子对象悬空。
+     * 若返回值是左值引用或指针，父对象（被调用方法 / 属性的 this 参数）会至少保持存活至返回值的生命周期结束
+     * 否则此策略会回退到 ReturnValuePolicy::kMove。
+     * 其内部实现与 ReturnValuePolicy::kReference 一致，但额外添加了 Global<T>，确保只要返回值还被 JS
+     * 引用，父对象就不会被垃圾回收。这是通过 property 等创建的属性获取器（property getter）的默认策略。
      */
     kReferenceInternal = 5,
 };
