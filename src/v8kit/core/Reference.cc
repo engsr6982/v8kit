@@ -143,6 +143,7 @@ IMPL_SPECIALIZATION_LOCAL(Boolean);
 IMPL_SPECALIZATION_AS_VALUE(Boolean);
 IMPL_SPECALIZATION_V8_LOCAL_TYPE(Boolean);
 bool Local<Boolean>::getValue() const { return val->Value(); }
+Local<Boolean>::operator bool() const { return val->Value(); }
 
 IMPL_SPECIALIZATION_LOCAL(Number);
 IMPL_SPECALIZATION_AS_VALUE(Number);

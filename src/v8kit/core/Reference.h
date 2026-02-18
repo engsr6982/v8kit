@@ -127,6 +127,8 @@ class Local<Boolean> {
 
 public:
     [[nodiscard]] bool getValue() const;
+
+    operator bool() const;
 };
 
 template <>
