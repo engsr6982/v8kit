@@ -21,17 +21,17 @@ namespace v8kit {
 
 // Local<Value>
 Local<Value>::Local() noexcept : val(Undefined::newUndefined().val){}; // default constructor
-bool Local<Value>::isNull() const { return val->IsNull(); }
-bool Local<Value>::isUndefined() const { return val->IsUndefined(); }
-bool Local<Value>::isNullOrUndefined() const { return val->IsNullOrUndefined(); }
-bool Local<Value>::isBoolean() const { return !isNullOrUndefined() && val->IsBoolean(); }
-bool Local<Value>::isNumber() const { return !isNullOrUndefined() && val->IsNumber(); }
-bool Local<Value>::isBigInt() const { return !isNullOrUndefined() && val->IsBigInt(); }
-bool Local<Value>::isString() const { return !isNullOrUndefined() && val->IsString(); }
-bool Local<Value>::isSymbol() const { return !isNullOrUndefined() && val->IsSymbol(); }
-bool Local<Value>::isObject() const { return !isNullOrUndefined() && val->IsObject(); }
-bool Local<Value>::isArray() const { return !isNullOrUndefined() && val->IsArray(); }
-bool Local<Value>::isFunction() const { return !isNullOrUndefined() && val->IsFunction(); }
+bool Local<Value>::isNull() const { return !val.IsEmpty() && val->IsNull(); }
+bool Local<Value>::isUndefined() const { return !val.IsEmpty() && val->IsUndefined(); }
+bool Local<Value>::isNullOrUndefined() const { return !val.IsEmpty() && val->IsNullOrUndefined(); }
+bool Local<Value>::isBoolean() const { return !val.IsEmpty() && !isNullOrUndefined() && val->IsBoolean(); }
+bool Local<Value>::isNumber() const { return !val.IsEmpty() && !isNullOrUndefined() && val->IsNumber(); }
+bool Local<Value>::isBigInt() const { return !val.IsEmpty() && !isNullOrUndefined() && val->IsBigInt(); }
+bool Local<Value>::isString() const { return !val.IsEmpty() && !isNullOrUndefined() && val->IsString(); }
+bool Local<Value>::isSymbol() const { return !val.IsEmpty() && !isNullOrUndefined() && val->IsSymbol(); }
+bool Local<Value>::isObject() const { return !val.IsEmpty() && !isNullOrUndefined() && val->IsObject(); }
+bool Local<Value>::isArray() const { return !val.IsEmpty() && !isNullOrUndefined() && val->IsArray(); }
+bool Local<Value>::isFunction() const { return !val.IsEmpty() && !isNullOrUndefined() && val->IsFunction(); }
 
 Local<Value> Local<Value>::asValue() const { return *this; }
 Local<Null>  Local<Value>::asNull() const {
