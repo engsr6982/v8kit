@@ -248,9 +248,13 @@ public:
 
     Local<Value> call(Local<Value> const& thiz, std::span<const Local<Value>> args) const;
 
+    Local<Value> call(Local<Value> const& thiz, std::initializer_list<Local<Value>> args) const;
+
     [[nodiscard]] Local<Value> callAsConstructor() const;
 
     [[nodiscard]] Local<Value> callAsConstructor(std::span<const Local<Value>> args) const;
+
+    [[nodiscard]] Local<Value> callAsConstructor(std::initializer_list<Local<Value>> args) const;
 };
 
 #undef SPECIALIZATION_LOCAL

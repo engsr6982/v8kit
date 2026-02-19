@@ -358,6 +358,9 @@ Local<Value> Local<Function>::call(Local<Value> const& thiz, std::span<const Loc
     Exception::rethrow(vtry);
     return Local<Value>{result.ToLocalChecked()};
 }
+Local<Value> Local<Function>::call(Local<Value> const& thiz, std::initializer_list<Local<Value>> args) const {
+    return call(thiz, std::span(args));
+}
 
 Local<Value> Local<Function>::callAsConstructor() const { return callAsConstructor(std::span<const Local<Value>>{}); }
 
@@ -382,6 +385,9 @@ Local<Value> Local<Function>::callAsConstructor(std::span<const Local<Value>> ar
     auto result = val->CallAsConstructor(ctx, argc, argv);
     Exception::rethrow(vtry);
     return Local<Value>{result.ToLocalChecked()};
+}
+Local<Value> Local<Function>::callAsConstructor(std::initializer_list<Local<Value>> args) const {
+    return callAsConstructor(std::span(args));
 }
 
 
