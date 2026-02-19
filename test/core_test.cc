@@ -163,3 +163,124 @@ TEST_CASE_METHOD(CoreTestFixture, "Exception pass-through") {
 
     engine->eval(v8kit::String::newString("try { throwr() } catch (e) { ensure(e.message) }"));
 }
+
+
+TEST_CASE("Local<T> via Engine::eval") {
+    using namespace v8kit;
+
+    std::unique_ptr<Engine> engine = std::make_unique<Engine>();
+    EngineScope             enter{engine.get()};
+
+    SECTION("Boolean") {
+        auto bTrue  = engine->eval(String::newString("true"));
+        auto bFalse = engine->eval(String::newString("false"));
+
+        REQUIRE(bTrue.isBoolean());
+        REQUIRE(bTrue.asBoolean().getValue() == true);
+
+        REQUIRE(bFalse.isBoolean());
+        REQUIRE(bFalse.asBoolean().getValue() == false);
+    }
+
+    SECTION("Number") {
+        auto n = engine->eval(String::newString("42"));
+        REQUIRE(n.isNumber());
+        REQUIRE(n.asNumber().getInt32() == 42);
+    }
+
+    SECTION("String") {
+        auto s = engine->eval(String::newString("'hello'"));
+        REQUIRE(s.isString());
+        REQUIRE(s.asString().getValue() == "hello");
+        REQUIRE(s.asString().length() == 5);
+    }
+
+    SECTION("Null & Undefined") {
+        auto n = engine->eval(String::newString("null"));
+        auto u = engine->eval(String::newString("undefined"));
+
+        REQUIRE(n.isNull());
+        REQUIRE(u.isUndefined());
+        REQUIRE(n.isNullOrUndefined());
+        REQUIRE(u.isNullOrUndefined());
+    }
+
+    SECTION("BigInt") {
+        auto bi = engine->eval(String::newString("1234567890123456789n"));
+        REQUIRE(bi.isBigInt());
+        REQUIRE(bi.asBigInt().getInt64() == 1234567890123456789LL);
+    }
+
+    SECTION("Symbol") {
+        auto s = engine->eval(String::newString("Symbol('desc')"));
+        REQUIRE(s.isSymbol());
+        auto desc = s.asSymbol().getDescription();
+        REQUIRE(desc.isString());
+        REQUIRE(desc.asString().getValue() == "desc");
+    }
+
+    SECTION("Object") {
+        auto obj = engine->eval(String::newString("({foo: 123, bar: 'abc'})"));
+        REQUIRE(obj.isObject());
+
+        auto foo = obj.asObject().get(String::newString("foo"));
+        REQUIRE(foo.isNumber());
+        REQUIRE(foo.asNumber().getInt32() == 123);
+
+        auto bar = obj.asObject().get(String::newString("bar"));
+        REQUIRE(bar.isString());
+        REQUIRE(bar.asString().getValue() == "abc");
+
+        obj.asObject().remove(String::newString("foo"));
+        REQUIRE_FALSE(obj.asObject().has(String::newString("foo")));
+    }
+
+    SECTION("Array") {
+        auto arr = engine->eval(String::newString("[1,2,3]"));
+        REQUIRE(arr.isArray());
+        auto a = arr.asArray();
+        REQUIRE(a.length() == 3);
+        REQUIRE(a.get(0).asNumber().getInt32() == 1);
+        REQUIRE(a[1].asNumber().getInt32() == 2);
+    }
+
+    SECTION("Function") {
+        auto fn = engine->eval(String::newString("(function(x){return x+1;})"));
+        REQUIRE(fn.isFunction());
+        auto f = fn.asFunction();
+
+        auto result = f.call(engine->globalThis(), {Number::newNumber(41)});
+        REQUIRE(result.isNumber());
+        REQUIRE(result.asNumber().getInt32() == 42);
+
+        auto value =
+            engine->eval(String::newString("class Foo { constructor(x){this.x = x;}  getX() {return this.x;} };Foo"));
+        REQUIRE(value.isFunction());
+        auto ctor = value.asFunction();
+        auto foo  = ctor.callAsConstructor({Number::newNumber(42)});
+        REQUIRE(foo.isObject());
+        auto fooObj = foo.asObject();
+        auto _getX  = fooObj.get(String::newString("getX"));
+        REQUIRE(_getX.isFunction());
+        auto getX = _getX.asFunction();
+        auto x    = getX.call(foo, {});
+        REQUIRE(x.isNumber());
+        REQUIRE(x.asNumber().getInt32() == 42);
+    }
+
+    SECTION("as<T> conversion") {
+        auto          n   = engine->eval(String::newString("99"));
+        Local<Value>  v   = n.asValue();
+        Local<Number> num = v.as<Number>();
+        REQUIRE(num.getInt32() == 99);
+    }
+
+    SECTION("operator== and clear") {
+        auto n1 = engine->eval(String::newString("10"));
+        auto n2 = engine->eval(String::newString("10"));
+
+        REQUIRE(n1 == n2.asValue());
+        n1.clear();
+        REQUIRE_FALSE(n1.isNumber());
+    }
+}
