@@ -65,7 +65,7 @@ Local<BigInt> BigInt::newBigIntUnsigned(uint64_t i) {
 
 
 Local<String> String::newString(const char* str) { return newString(std::string_view{str}); }
-Local<String> String::newString(std::string const& str) { return newString(str.c_str()); }
+Local<String> String::newString(std::string const& str) { return newString(std::string_view{str}); }
 Local<String> String::newString(std::string_view str) {
     auto isolate = EngineScope::currentRuntimeIsolateChecked();
 
