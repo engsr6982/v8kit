@@ -165,122 +165,159 @@ TEST_CASE_METHOD(CoreTestFixture, "Exception pass-through") {
 }
 
 
-TEST_CASE("Local<T> via Engine::eval") {
+TEST_CASE("Local<T> via Engine::eval - Boolean") {
     using namespace v8kit;
-
     std::unique_ptr<Engine> engine = std::make_unique<Engine>();
-    EngineScope             enter{engine.get()};
+    EngineScope enter{engine.get()};
 
-    SECTION("Boolean") {
-        auto bTrue  = engine->eval(String::newString("true"));
-        auto bFalse = engine->eval(String::newString("false"));
+    auto bTrue  = engine->eval(String::newString("true"));
+    auto bFalse = engine->eval(String::newString("false"));
 
-        REQUIRE(bTrue.isBoolean());
-        REQUIRE(bTrue.asBoolean().getValue() == true);
+    REQUIRE(bTrue.isBoolean());
+    REQUIRE(bTrue.asBoolean().getValue() == true);
 
-        REQUIRE(bFalse.isBoolean());
-        REQUIRE(bFalse.asBoolean().getValue() == false);
-    }
+    REQUIRE(bFalse.isBoolean());
+    REQUIRE(bFalse.asBoolean().getValue() == false);
+}
 
-    SECTION("Number") {
-        auto n = engine->eval(String::newString("42"));
-        REQUIRE(n.isNumber());
-        REQUIRE(n.asNumber().getInt32() == 42);
-    }
+TEST_CASE("Local<T> via Engine::eval - Number") {
+    using namespace v8kit;
+    std::unique_ptr<Engine> engine = std::make_unique<Engine>();
+    EngineScope enter{engine.get()};
 
-    SECTION("String") {
-        auto s = engine->eval(String::newString("'hello'"));
-        REQUIRE(s.isString());
-        REQUIRE(s.asString().getValue() == "hello");
-        REQUIRE(s.asString().length() == 5);
-    }
+    auto n = engine->eval(String::newString("42"));
+    REQUIRE(n.isNumber());
+    REQUIRE(n.asNumber().getInt32() == 42);
+}
 
-    SECTION("Null & Undefined") {
-        auto n = engine->eval(String::newString("null"));
-        auto u = engine->eval(String::newString("undefined"));
+TEST_CASE("Local<T> via Engine::eval - String") {
+    using namespace v8kit;
+    std::unique_ptr<Engine> engine = std::make_unique<Engine>();
+    EngineScope enter{engine.get()};
 
-        REQUIRE(n.isNull());
-        REQUIRE(u.isUndefined());
-        REQUIRE(n.isNullOrUndefined());
-        REQUIRE(u.isNullOrUndefined());
-    }
+    auto s = engine->eval(String::newString("'hello'"));
+    REQUIRE(s.isString());
+    REQUIRE(s.asString().getValue() == "hello");
+    REQUIRE(s.asString().length() == 5);
+}
 
-    SECTION("BigInt") {
-        auto bi = engine->eval(String::newString("1234567890123456789n"));
-        REQUIRE(bi.isBigInt());
-        REQUIRE(bi.asBigInt().getInt64() == 1234567890123456789LL);
-    }
+TEST_CASE("Local<T> via Engine::eval - Null & Undefined") {
+    using namespace v8kit;
+    std::unique_ptr<Engine> engine = std::make_unique<Engine>();
+    EngineScope enter{engine.get()};
 
-    SECTION("Symbol") {
-        auto s = engine->eval(String::newString("Symbol('desc')"));
-        REQUIRE(s.isSymbol());
-        auto desc = s.asSymbol().getDescription();
-        REQUIRE(desc.isString());
-        REQUIRE(desc.asString().getValue() == "desc");
-    }
+    auto n = engine->eval(String::newString("null"));
+    auto u = engine->eval(String::newString("undefined"));
 
-    SECTION("Object") {
-        auto obj = engine->eval(String::newString("({foo: 123, bar: 'abc'})"));
-        REQUIRE(obj.isObject());
+    REQUIRE(n.isNull());
+    REQUIRE(u.isUndefined());
+    REQUIRE(n.isNullOrUndefined());
+    REQUIRE(u.isNullOrUndefined());
+}
 
-        auto foo = obj.asObject().get(String::newString("foo"));
-        REQUIRE(foo.isNumber());
-        REQUIRE(foo.asNumber().getInt32() == 123);
+TEST_CASE("Local<T> via Engine::eval - BigInt") {
+    using namespace v8kit;
+    std::unique_ptr<Engine> engine = std::make_unique<Engine>();
+    EngineScope enter{engine.get()};
 
-        auto bar = obj.asObject().get(String::newString("bar"));
-        REQUIRE(bar.isString());
-        REQUIRE(bar.asString().getValue() == "abc");
+    auto bi = engine->eval(String::newString("1234567890123456789n"));
+    REQUIRE(bi.isBigInt());
+    REQUIRE(bi.asBigInt().getInt64() == 1234567890123456789LL);
+}
 
-        obj.asObject().remove(String::newString("foo"));
-        REQUIRE_FALSE(obj.asObject().has(String::newString("foo")));
-    }
+TEST_CASE("Local<T> via Engine::eval - Symbol") {
+    using namespace v8kit;
+    std::unique_ptr<Engine> engine = std::make_unique<Engine>();
+    EngineScope enter{engine.get()};
 
-    SECTION("Array") {
-        auto arr = engine->eval(String::newString("[1,2,3]"));
-        REQUIRE(arr.isArray());
-        auto a = arr.asArray();
-        REQUIRE(a.length() == 3);
-        REQUIRE(a.get(0).asNumber().getInt32() == 1);
-        REQUIRE(a[1].asNumber().getInt32() == 2);
-    }
+    auto s = engine->eval(String::newString("Symbol('desc')"));
+    REQUIRE(s.isSymbol());
+    auto desc = s.asSymbol().getDescription();
+    REQUIRE(desc.isString());
+    REQUIRE(desc.asString().getValue() == "desc");
+}
 
-    SECTION("Function") {
-        auto fn = engine->eval(String::newString("(function(x){return x+1;})"));
-        REQUIRE(fn.isFunction());
-        auto f = fn.asFunction();
+TEST_CASE("Local<T> via Engine::eval - Object") {
+    using namespace v8kit;
+    std::unique_ptr<Engine> engine = std::make_unique<Engine>();
+    EngineScope enter{engine.get()};
 
-        auto result = f.call(engine->globalThis(), {Number::newNumber(41)});
-        REQUIRE(result.isNumber());
-        REQUIRE(result.asNumber().getInt32() == 42);
+    auto obj = engine->eval(String::newString("({foo: 123, bar: 'abc'})"));
+    REQUIRE(obj.isObject());
 
-        auto value =
-            engine->eval(String::newString("class Foo { constructor(x){this.x = x;}  getX() {return this.x;} };Foo"));
-        REQUIRE(value.isFunction());
-        auto ctor = value.asFunction();
-        auto foo  = ctor.callAsConstructor({Number::newNumber(42)});
-        REQUIRE(foo.isObject());
-        auto fooObj = foo.asObject();
-        auto _getX  = fooObj.get(String::newString("getX"));
-        REQUIRE(_getX.isFunction());
-        auto getX = _getX.asFunction();
-        auto x    = getX.call(foo, {});
-        REQUIRE(x.isNumber());
-        REQUIRE(x.asNumber().getInt32() == 42);
-    }
+    auto foo = obj.asObject().get(String::newString("foo"));
+    REQUIRE(foo.isNumber());
+    REQUIRE(foo.asNumber().getInt32() == 123);
 
-    SECTION("as<T> conversion") {
-        auto          n   = engine->eval(String::newString("99"));
-        Local<Value>  v   = n.asValue();
-        Local<Number> num = v.as<Number>();
-        REQUIRE(num.getInt32() == 99);
-    }
+    auto bar = obj.asObject().get(String::newString("bar"));
+    REQUIRE(bar.isString());
+    REQUIRE(bar.asString().getValue() == "abc");
 
-    SECTION("operator== and clear") {
-        auto n1 = engine->eval(String::newString("10"));
-        auto n2 = engine->eval(String::newString("10"));
+    obj.asObject().remove(String::newString("foo"));
+    REQUIRE_FALSE(obj.asObject().has(String::newString("foo")));
+}
 
-        REQUIRE(n1 == n2.asValue());
-        n1.clear();
-        REQUIRE_FALSE(n1.isNumber());
-    }
+TEST_CASE("Local<T> via Engine::eval - Array") {
+    using namespace v8kit;
+    std::unique_ptr<Engine> engine = std::make_unique<Engine>();
+    EngineScope enter{engine.get()};
+
+    auto arr = engine->eval(String::newString("[1,2,3]"));
+    REQUIRE(arr.isArray());
+    auto a = arr.asArray();
+    REQUIRE(a.length() == 3);
+    REQUIRE(a.get(0).asNumber().getInt32() == 1);
+    REQUIRE(a[1].asNumber().getInt32() == 2);
+}
+
+TEST_CASE("Local<T> via Engine::eval - Function") {
+    using namespace v8kit;
+    std::unique_ptr<Engine> engine = std::make_unique<Engine>();
+    EngineScope enter{engine.get()};
+
+    auto fn = engine->eval(String::newString("(function(x){return x+1;})"));
+    REQUIRE(fn.isFunction());
+    auto f = fn.asFunction();
+
+    auto result = f.call(engine->globalThis(), {Number::newNumber(41)});
+    REQUIRE(result.isNumber());
+    REQUIRE(result.asNumber().getInt32() == 42);
+
+    auto value =
+        engine->eval(String::newString("class Foo { constructor(x){this.x = x;}  getX() {return this.x;} };Foo"));
+    REQUIRE(value.isFunction());
+    auto ctor = value.asFunction();
+    auto foo  = ctor.callAsConstructor({Number::newNumber(42)});
+    REQUIRE(foo.isObject());
+    auto fooObj = foo.asObject();
+    auto _getX  = fooObj.get(String::newString("getX"));
+    REQUIRE(_getX.isFunction());
+    auto getX = _getX.asFunction();
+    auto x    = getX.call(foo, {});
+    REQUIRE(x.isNumber());
+    REQUIRE(x.asNumber().getInt32() == 42);
+}
+
+TEST_CASE("Local<T> via Engine::eval - as<T> conversion") {
+    using namespace v8kit;
+    std::unique_ptr<Engine> engine = std::make_unique<Engine>();
+    EngineScope enter{engine.get()};
+
+    auto          n   = engine->eval(String::newString("99"));
+    Local<Value>  v   = n.asValue();
+    Local<Number> num = v.as<Number>();
+    REQUIRE(num.getInt32() == 99);
+}
+
+TEST_CASE("Local<T> via Engine::eval - operator== and clear") {
+    using namespace v8kit;
+    std::unique_ptr<Engine> engine = std::make_unique<Engine>();
+    EngineScope enter{engine.get()};
+
+    auto n1 = engine->eval(String::newString("10"));
+    auto n2 = engine->eval(String::newString("10"));
+
+    REQUIRE(n1 == n2.asValue());
+    n1.clear();
+    REQUIRE_FALSE(n1.isNumber());
 }
