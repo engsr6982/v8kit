@@ -1,6 +1,7 @@
 #pragma once
 #include <cstdint>
 
+#include <type_traits>
 
 namespace v8kit {
 
@@ -46,4 +47,9 @@ enum class ReturnValuePolicy : uint8_t {
     kReferenceInternal = 5,
 };
 
-}
+
+template <typename T>
+struct is_policy : std::is_same<std::decay_t<T>, ReturnValuePolicy> {};
+
+
+} // namespace v8kit

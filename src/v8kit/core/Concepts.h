@@ -23,5 +23,9 @@ concept HasEquality = requires(T const& lhs, T const& rhs) {
 template <typename T>
 concept WrapType = std::derived_from<T, Value>;
 
+template <class F>
+concept Callable =
+    requires(F f) { &F::operator(); } || std::is_function_v<std::remove_pointer_t<std::remove_cvref_t<F>>>;
+
 
 } // namespace v8kit::concepts

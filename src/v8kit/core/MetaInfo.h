@@ -85,6 +85,24 @@ struct ClassMeta {
     ClassMeta const*         base_;
     std::type_index const    typeId_;
 
+    // 输入: Derived* (as void*)
+    // 输出: Base* (as void*) - 指针地址可能发生变化
+    using UpcasterCallback = void* (*)(void*);
+    UpcasterCallback const upcaster_{nullptr}; // 转换到直接基类 (base_) 的函数
+
+    [[nodiscard]] void* castTo(void* ptr, std::type_index targetId) const {
+        if (typeId_ == targetId) return ptr;
+
+        // 递归向基类查找
+        if (base_ && upcaster_) {
+            // 先转为 Base*
+            void* basePtr = upcaster_(ptr);
+            // 在基类中继续查找
+            return base_->castTo(basePtr, targetId);
+        }
+        return nullptr;
+    }
+
     [[nodiscard]] inline bool hasConstructor() const { return instanceMeta_.constructor_ != nullptr; }
 
     [[nodiscard]] inline bool isA(std::type_index typeIdx, bool recursion = true) const {
@@ -112,13 +130,15 @@ struct ClassMeta {
         StaticMemberMeta   staticMeta,
         InstanceMemberMeta instanceMeta,
         ClassMeta const*   base,
-        std::type_index    typeId
+        std::type_index    typeId,
+        UpcasterCallback   upcaster = nullptr
     )
     : name_(std::move(name)),
       staticMeta_(std::move(staticMeta)),
       instanceMeta_(std::move(instanceMeta)),
       base_(base),
-      typeId_(typeId) {}
+      typeId_(typeId),
+      upcaster_(upcaster) {}
 };
 
 struct EnumMeta {

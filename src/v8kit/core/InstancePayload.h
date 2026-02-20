@@ -46,8 +46,13 @@ public:
         }
     }
 
-    // template <typename T>
-    // inline T* unwrap() const;
+    template <typename T>
+    inline T* unwrap() const {
+        if (holder_) {
+            return holder_->unwrap<T>();
+        }
+        return nullptr;
+    }
 
     V8KIT_DISABLE_COPY(InstancePayload);
 

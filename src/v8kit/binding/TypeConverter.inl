@@ -1,9 +1,13 @@
 #pragma once
+#include "NativeInstanceImpl.h"
+#include "ReturnValuePolicy.h"
 #include "TypeConverter.h" // NOLINT
+#include "traits/Polymorphic.h"
 #include "v8kit/core/Exception.h"
 #include "v8kit/core/Reference.h"
 #include "v8kit/core/Value.h"
 
+#include <cassert>
 #include <stdexcept>
 #include <variant>
 
@@ -214,10 +218,186 @@ struct TypeConverter<std::pair<Ty1, Ty2>> {
 // };
 
 
+template <typename T>
+struct GenericTypeConverter {
+
+};
+
+
+template <typename T>
+    requires binding::IsBindingClass_v<T>
+struct TypeConverter<T> {
+    template <typename U>
+    static ReturnValuePolicy handleAutomaticPolicy(ReturnValuePolicy policy) {
+        // @see ReturnValuePolicy::kAutomatic comment
+        if (policy == ReturnValuePolicy::kAutomatic) {
+            if constexpr (std::is_pointer_v<U>) {
+                return ReturnValuePolicy::kTakeOwnership;
+            } else if constexpr (std::is_lvalue_reference_v<U>) {
+                return ReturnValuePolicy::kCopy;
+            } else if constexpr (std::is_rvalue_reference_v<U>) {
+                return ReturnValuePolicy::kMove;
+            }
+        }
+        return policy;
+    }
+
+    // C++ -> JS
+    static Local<Value> toJs(T&& value, ReturnValuePolicy policy, Local<Value> parent) {
+        using RawType = std::decay_t<T>; // 去除引用和修饰符
+        policy        = handleAutomaticPolicy<T>(policy);
+
+        auto& engine = EngineScope::currentRuntimeChecked();
+
+        // 应用 PolymorphicTypeHook
+        const std::type_info* runtimeTypeInfo = nullptr;
+        const void*           mostDerivedPtr  = nullptr;
+        if constexpr (std::is_pointer_v<RawType>) {
+            if (!value) return Null::newNull();
+            // Hook: 传入指针，获取真实类型和最顶层地址
+            mostDerivedPtr = traits::PolymorphicTypeHook<std::remove_pointer_t<RawType>>::get(value, runtimeTypeInfo);
+        } else {
+            // 引用取地址后传入 Hook
+            mostDerivedPtr = traits::PolymorphicTypeHook<RawType>::get(&value, runtimeTypeInfo);
+        }
+
+        // 如果 Hook 没找到类型 (比如非多态)，回退到静态类型 T
+        std::type_index typeIdx = runtimeTypeInfo ? std::type_index(*runtimeTypeInfo)
+                                                  : std::type_index(typeid(std::remove_pointer_t<RawType>));
+
+        auto* meta = engine.getClassDefine(typeIdx);
+        if (!meta) {
+            // 如果真实类型没注册 (比如 Dog 没注册，只注册了 Animal)，
+            // 尝试回退到声明类型 (Animal) 的 Meta
+            meta = engine.getClassDefine(std::type_index(typeid(std::remove_pointer_t<RawType>)));
+            if (!meta) {
+                throw Exception("Class not registered: " + std::string(typeIdx.name()));
+            }
+            // 此时 mostDerivedPtr 可能对于 Animal 来说是错误的 (如果 offsets 存在)，
+            // 但如果回退到了 Animal，我们应该用原始指针 value，而不是 mostDerivedPtr。
+            // 这是一个细微的 Edge Case，通常如果注册了多态基类，应该能处理。
+            // 简单起见，如果回退，我们重置指针：
+            if constexpr (std::is_pointer_v<RawType>) mostDerivedPtr = value;
+            else mostDerivedPtr = &value;
+        }
+
+        // 根据 Policy 创建 NativeInstance
+        std::unique_ptr<NativeInstance> instance;
+
+        auto createImpl = [&](auto&& holder) {
+            // NativeInstanceFactory 需要实现类似 pybind11 的逻辑，
+            // 这里的 holder 类型决定了 Impl 的模板参数
+            using HolderT = std::decay_t<decltype(holder)>;
+            using ValT    = typename std::pointer_traits<
+                   typename std::conditional<std::is_pointer_v<HolderT>, HolderT, typename HolderT::element_type*>::type>::
+                element_type;
+
+            return std::make_unique<NativeInstanceImpl<ValT, HolderT>>(meta, std::forward<decltype(holder)>(holder));
+        };
+
+        using ElementType = std::remove_pointer_t<RawType>;
+
+        switch (policy) {
+        case ReturnValuePolicy::kCopy: {
+            // 必须拷贝：Holder 是 unique_ptr<T>
+            // 注意：必须拷贝静态类型 T，不能拷贝多态指针 (除非有 clone 虚函数)
+            // 如果是多态切片 (Slicing)，这里会发生切片拷贝。这是符合 C++ 语义的。
+            if constexpr (std::is_copy_constructible_v<ElementType>) {
+                if constexpr (std::is_pointer_v<RawType>) {
+                    instance = createImpl(std::make_unique<ElementType>(*value));
+                } else {
+                    instance = createImpl(std::make_unique<ElementType>(value));
+                }
+            } else {
+                throw Exception("Object is not copy constructible");
+            }
+            break;
+        }
+        case ReturnValuePolicy::kMove: {
+            // 必须移动
+            if constexpr (std::is_move_constructible_v<ElementType>) {
+                // 注意：移动通常意味着源对象失效，这通常只对右值引用有效
+                instance = createImpl(std::make_unique<ElementType>(std::move(value)));
+            }
+            break;
+        }
+        case ReturnValuePolicy::kTakeOwnership: {
+            if constexpr (std::is_pointer_v<RawType>) {
+                // 只有指针能接管所有权, 强转为 unique_ptr
+                instance = createImpl(std::unique_ptr<ElementType>(value));
+            } else {
+                throw Exception("Cannot take ownership of non-pointer");
+            }
+            break;
+        }
+        case ReturnValuePolicy::kReference:
+        case ReturnValuePolicy::kReferenceInternal: { // Internal 暂且当做 Reference，后续处理 keep alive
+            // Holder 是 T* (裸指针)
+            // 这里的 value 可能是 Derived*，但我们创建 Impl<Derived, Derived*>
+            // 关键点：即使我们查到了 DerivedMeta，我们的 Impl 模板参数 T 应该是声明类型还是真实类型？
+            // 答：为了安全，Impl 应该持有 声明类型 (Static Type) 的指针，但 meta 是 运行时类型。
+            // 这样 NativeInstanceImpl::cast 会工作正常。
+
+            if constexpr (std::is_pointer_v<RawType>) {
+                instance = createImpl(value);
+            } else {
+                instance = createImpl(&value);
+            }
+            break;
+        }
+        default:
+            break;
+        }
+
+        // 6. 包装为 JS 对象
+        Local<Object> jsObj = engine.newInstance(*meta, std::move(instance));
+
+        // 7. 处理 ReferenceInternal (Keep Alive)
+        if (policy == ReturnValuePolicy::kReferenceInternal) {
+            if (!parent.isObject()) {
+                throw Exception("kReferenceInternal requires a valid parent object");
+            }
+            // 这是一个高级操作：让 jsObj 依赖 parent
+            // V8 不直接提供 "obj keep alive parent"，通常是 "parent keep alive obj" (Set)
+            // 但这里反过来了：返回的子对象需要保活父对象。
+            // 实现方式：利用 InternalField 或者 WeakCallback 或者 HiddenValue。
+            // 简单做法：给 jsObj 设置一个 Hidden Reference 指向 parent。
+            // jsObj->SetPrivate(context, keepAliveSymbol, parent);
+            // 或者使用 engine.addKeepAlive(jsObj, parent);
+            // 这一步需要 Engine 支持。
+            // TODO: impl
+        }
+        return jsObj;
+    }
+
+    // JS -> C++
+    static T* toCpp(Local<Value> const& value) {
+        // 获取 Payload
+        // auto* payload = internal::getPayload(value);
+        // if (!payload) throw Exception("Not a native instance");
+        //
+        // // 使用 unwrap，它会调用 NativeInstance::cast -> Meta::castTo
+        // // 自动处理继承偏移
+        // T* ptr = payload->getHolder()->unwrap<T>();
+        // if (!ptr) throw Exception("Type mismatch or cast failed");
+        // return ptr;
+    }
+};
+
+
 // free functions
 template <typename T>
 Local<Value> toJs(T&& val) {
     return RawTypeConverter<T>::toJs(std::forward<T>(val));
+}
+
+template <typename T>
+Local<Value> toJs(T&& val, ReturnValuePolicy policy, Local<Value> parent) {
+    if constexpr (requires { RawTypeConverter<T>::toJs(std::forward<T>(val), policy, parent); }) {
+        return RawTypeConverter<T>::toJs(std::forward<T>(val), policy, parent);
+    } else {
+        return toJs(std::forward<T>(val)); // drop policy and parent
+    }
 }
 
 template <typename T>

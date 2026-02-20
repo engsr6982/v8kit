@@ -3,6 +3,10 @@
 
 #include <string>
 
+namespace v8kit {
+enum class ReturnValuePolicy : uint8_t;
+}
+
 namespace v8kit::binding {
 
 /**
@@ -22,6 +26,13 @@ template <typename T>
 concept HasTypeConverter = requires { typename RawTypeConverter<T>; };
 template <typename T>
 inline constexpr bool HasTypeConverter_v = HasTypeConverter<T>;
+
+
+template <typename T>
+struct BindingClassTag : std::false_type {};
+
+template <typename T>
+inline constexpr bool IsBindingClass_v = BindingClassTag<T>::value;
 
 namespace internal {
 
@@ -47,8 +58,27 @@ inline constexpr bool CppValueTypeTransformer_v = CppValueTypeTransformer<From, 
 
 } // namespace internal
 
+/**
+ * Convert C++ type to js type
+ * @tparam T C++ type
+ * @param val C++ value
+ * @return Local<Value>
+ * @note forward to RawTypeConverter<T>::toJs(T)
+ */
 template <typename T>
 [[nodiscard]] Local<Value> toJs(T&& val);
+
+/**
+ * Convert js type to C++ type
+ * @tparam T C++ type
+ * @param val C++ value
+ * @param policy Return value policy
+ * @param parent Parent object
+ * @return Local<Value>
+ * @note if not RawTypeConverter<T>::toJs(T, policy, parent) is defined, forward to RawTypeConverter<T>::toJs(T)
+ */
+template <typename T>
+[[nodiscard]] Local<Value> toJs(T&& val, ReturnValuePolicy policy, Local<Value> parent);
 
 template <typename T>
 [[nodiscard]] decltype(auto) toCpp(Local<Value> const& value);
