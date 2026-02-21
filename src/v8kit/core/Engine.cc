@@ -179,6 +179,9 @@ Local<Function> Engine::registerClass(ClassMeta const& meta) {
     buildInstanceMembers(ctor, meta);
 
     if (meta.base_ != nullptr) {
+        if (meta.base_ == &meta || meta.typeId_ == meta.base_->typeId_) {
+            throw std::logic_error("Self-inheritance or same-type inheritance is logically invalid.");
+        }
         if (!meta.base_->hasConstructor()) {
             throw Exception("Base class must have a constructor: " + meta.name_);
         }
