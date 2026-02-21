@@ -24,7 +24,7 @@ namespace v8kit {
 Exception::Exception(v8::TryCatch const& tryCatch)
 : std::exception(),
   ctx_(std::make_shared<ExceptionContext>()) {
-    auto isolate = EngineScope::currentRuntimeIsolateChecked();
+    auto isolate = EngineScope::currentEngineIsolateChecked();
 
     ctx_->exception = v8::Global<v8::Value>(isolate, tryCatch.Exception());
 }
@@ -66,7 +66,7 @@ std::string Exception::stacktrace() const noexcept {
 }
 
 void Exception::rethrowToRuntime() const {
-    auto isolate = EngineScope::currentRuntimeIsolateChecked();
+    auto isolate = EngineScope::currentEngineIsolateChecked();
     isolate->ThrowException(ctx_->exception.Get(isolate));
 }
 
@@ -74,7 +74,7 @@ void Exception::extractMessage() const noexcept {
     if (!ctx_->message.empty()) {
         return;
     }
-    auto isolate = EngineScope::currentRuntimeIsolateChecked();
+    auto isolate = EngineScope::currentEngineIsolateChecked();
     auto vtry    = v8::TryCatch{isolate};
 
     auto msg = v8::Exception::CreateMessage(isolate, ctx_->exception.Get(isolate));
@@ -87,7 +87,7 @@ void Exception::extractMessage() const noexcept {
 }
 
 void Exception::makeException() const {
-    auto isolate = EngineScope::currentRuntimeIsolateChecked();
+    auto isolate = EngineScope::currentEngineIsolateChecked();
 
     v8::Local<v8::Value> exception;
     {

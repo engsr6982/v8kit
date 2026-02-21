@@ -149,7 +149,7 @@ void Engine::addManagedResource(void* resource, v8::Local<v8::Value> value, std:
     );
     managedResources_.emplace(managed.release(), std::move(weak));
 }
-ClassMeta const* Engine::getClassDefine(std::type_index typeId) const {
+ClassMeta const* Engine::getClassMeta(std::type_index typeId) const {
     auto iter = typeMapping_.find(typeId);
     if (iter == typeMapping_.end()) return nullptr;
     return iter->second;
@@ -447,7 +447,7 @@ void Engine::buildStaticMembers(v8::Local<v8::FunctionTemplate>& obj, ClassMeta 
                 auto fbin = static_cast<StaticMemberMeta::Function*>(info.Data().As<v8::External>()->Value());
 
                 try {
-                    auto ret = (fbin->callback_)(Arguments{EngineScope::currentRuntime(), info});
+                    auto ret = (fbin->callback_)(Arguments{EngineScope::currentEngine(), info});
                     info.GetReturnValue().Set(ValueHelper::unwrap(ret));
                 } catch (Exception const& e) {
                     e.rethrowToRuntime();

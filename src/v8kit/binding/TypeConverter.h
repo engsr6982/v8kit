@@ -128,7 +128,7 @@ struct GenericTypeConverter {
         auto instance = factory::createNativeInstance(std::forward<T>(value), policy, resolved);
         if (!instance) return Null::newNull();
 
-        auto&         engine = EngineScope::currentRuntimeChecked();
+        auto&         engine = EngineScope::currentEngineChecked();
         Local<Object> jsObj  = engine.newInstance(*resolved.meta, std::move(instance));
 
         if (policy == ReturnValuePolicy::kReferenceInternal) {
@@ -144,7 +144,7 @@ struct GenericTypeConverter {
 
     // JS -> C++
     static T* toCpp(Local<Value> const& value) {
-        auto& engine  = EngineScope::currentRuntimeChecked();
+        auto& engine  = EngineScope::currentEngineChecked();
         auto  payload = engine.getInstancePayload(value.asObject());
         if (!payload) {
             throw Exception("Argument is not a native instance");

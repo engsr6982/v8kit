@@ -44,11 +44,11 @@ Global<T>::Global() noexcept = default;
 
 template <typename T>
 Global<T>::Global(Local<T> const& val)
-: engine_(EngineScope::currentRuntime()),
+: engine_(EngineScope::currentEngine()),
   handle_(engine_->isolate_, ValueHelper::unwrap(val)) {}
 
 template <typename T>
-Global<T>::Global(Weak<T> const& val) : engine_(EngineScope::currentRuntime()),
+Global<T>::Global(Weak<T> const& val) : engine_(EngineScope::currentEngine()),
                                         handle_(ValueHelper::unwrap(val)) {}
 
 template <typename T>
@@ -100,7 +100,7 @@ void Global<T>::reset(Local<T> const& val) {
         reset();
         return;
     }
-    auto& current = EngineScope::currentRuntimeChecked();
+    auto& current = EngineScope::currentEngineChecked();
     handle_.Reset(current.isolate_, raw);
     engine_ = &current;
 }
@@ -112,14 +112,14 @@ Weak<T>::Weak() noexcept = default;
 
 template <typename T>
 Weak<T>::Weak(Local<T> const& val)
-: engine_(EngineScope::currentRuntime()),
+: engine_(EngineScope::currentEngine()),
   handle_(engine_->isolate_, ValueHelper::unwrap(val)) {
     markWeak();
 }
 
 template <typename T>
 Weak<T>::Weak(Global<T> const& val)
-: engine_(EngineScope::currentRuntime()),
+: engine_(EngineScope::currentEngine()),
   handle_(engine_->isolate_, ValueHelper::unwrap(val)) {
     markWeak();
 }
@@ -175,7 +175,7 @@ void Weak<T>::reset(Local<T> const& val) {
         reset();
         return;
     }
-    auto& current = EngineScope::currentRuntimeChecked();
+    auto& current = EngineScope::currentEngineChecked();
     handle_.Reset(current.isolate_, raw);
     engine_ = &current;
     markWeak();

@@ -51,7 +51,7 @@ struct ResolvedCastSource {
 
 template <typename T>
 ResolvedCastSource resolveCastSource(T* value) {
-    auto& engine = EngineScope::currentRuntimeChecked();
+    auto& engine = EngineScope::currentEngineChecked();
 
     // 1. 获取动态类型和基址
     const std::type_info* dynamicType = nullptr;
@@ -59,14 +59,14 @@ ResolvedCastSource resolveCastSource(T* value) {
 
     // 2. 尝试决议动态类型 (Downcast)
     if (dynamicType && dynamicPtr) {
-        if (auto* meta = engine.getClassDefine(std::type_index(*dynamicType))) {
+        if (auto* meta = engine.getClassMeta(std::type_index(*dynamicType))) {
             return {dynamicPtr, meta, true}; // 完美命中子类
         }
     }
 
     // 3. Fallback 回退到静态类型 (Original)
     std::type_index staticIdx(typeid(T));
-    auto*           staticMeta = engine.getClassDefine(staticIdx);
+    auto*           staticMeta = engine.getClassMeta(staticIdx);
     if (!staticMeta) {
         throw Exception("Class not registered: " + std::string(staticIdx.name()));
     }

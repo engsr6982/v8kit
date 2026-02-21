@@ -46,7 +46,7 @@ decltype(auto) wrapScriptCallback(Local<Value> const& value) {
     if (!value.isFunction()) [[unlikely]] {
         throw Exception("expected function", Exception::Type::TypeError);
     }
-    auto& engine = EngineScope::currentRuntimeChecked();
+    auto& engine = EngineScope::currentEngineChecked();
 
     Global<Function> global{value.asFunction()}; // keep alive
     return [keep = std::move(global), engine = &engine](Args&&... args) -> R {

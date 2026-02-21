@@ -22,17 +22,19 @@ public:
     V8KIT_DISABLE_COPY_MOVE(EngineScope);
     V8KIT_DISABLE_NEW();
 
-    static Engine* currentRuntime();
+    static Engine* currentEngine();
 
-    static Engine& currentRuntimeChecked();
+    static Engine& currentEngineChecked();
 
     static std::tuple<v8::Isolate*, v8::Local<v8::Context>> currentIsolateAndContextChecked();
 
-    static v8::Isolate* currentRuntimeIsolateChecked();
+    static v8::Isolate* currentEngineIsolateChecked();
 
-    static v8::Local<v8::Context> currentRuntimeContextChecked();
+    static v8::Local<v8::Context> currentEngineContextChecked();
 
 private:
+    static void ensureEngine(Engine* engine);
+
     // 作用域链
     Engine const* engine_{nullptr};
     EngineScope*  prev_{nullptr};

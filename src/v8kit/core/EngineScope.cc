@@ -21,38 +21,41 @@ EngineScope::EngineScope(Engine* runtime)
 
 EngineScope::~EngineScope() { gCurrentScope_ = prev_; }
 
-Engine* EngineScope::currentRuntime() {
+Engine* EngineScope::currentEngine() {
     if (gCurrentScope_) {
         return const_cast<Engine*>(gCurrentScope_->engine_);
     }
     return nullptr;
 }
 
-Engine& EngineScope::currentRuntimeChecked() {
-    auto current = currentRuntime();
-    if (current == nullptr) {
-        throw std::logic_error("No EngineScope active");
-    }
+Engine& EngineScope::currentEngineChecked() {
+    auto current = currentEngine();
+    ensureEngine(current);
     return *current;
 }
 
 std::tuple<v8::Isolate*, v8::Local<v8::Context>> EngineScope::currentIsolateAndContextChecked() {
-    auto& current = currentRuntimeChecked();
+    auto& current = currentEngineChecked();
     return std::make_tuple(current.isolate_, current.context_.Get(current.isolate_));
 }
 
-v8::Isolate*           EngineScope::currentRuntimeIsolateChecked() { return currentRuntimeChecked().isolate_; }
-v8::Local<v8::Context> EngineScope::currentRuntimeContextChecked() {
-    auto& current = currentRuntimeChecked();
+v8::Isolate*           EngineScope::currentEngineIsolateChecked() { return currentEngineChecked().isolate_; }
+v8::Local<v8::Context> EngineScope::currentEngineContextChecked() {
+    auto& current = currentEngineChecked();
     return current.context_.Get(current.isolate_);
+}
+void EngineScope::ensureEngine(Engine* engine) {
+    if (engine == nullptr) {
+        throw std::logic_error("An EngineScope must be created before accessing the engine API");
+    }
 }
 
 
-ExitEngineScope::ExitEngineScope() : unlocker_(EngineScope::currentRuntimeChecked().isolate_) {}
+ExitEngineScope::ExitEngineScope() : unlocker_(EngineScope::currentEngineChecked().isolate_) {}
 
 namespace internal {
 
-V8EscapeScope::V8EscapeScope() : handleScope_(EngineScope::currentRuntimeChecked().isolate_) {}
+V8EscapeScope::V8EscapeScope() : handleScope_(EngineScope::currentEngineChecked().isolate_) {}
 V8EscapeScope::V8EscapeScope(v8::Isolate* isolate) : handleScope_(isolate) {}
 
 } // namespace internal

@@ -65,7 +65,7 @@ public:
 
     Local<Object> registerEnum(EnumMeta const& meta);
 
-    [[nodiscard]] ClassMeta const* getClassDefine(std::type_index typeId) const;
+    [[nodiscard]] ClassMeta const* getClassMeta(std::type_index typeId) const;
 
     Local<Object> newInstance(ClassMeta const& meta, std::unique_ptr<NativeInstance>&& instance);
 

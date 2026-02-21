@@ -165,7 +165,7 @@ IMPL_SPECALIZATION_AS_VALUE(String);
 IMPL_SPECALIZATION_V8_LOCAL_TYPE(String);
 int         Local<String>::length() const { return val->Length(); }
 std::string Local<String>::getValue() const {
-    auto                  isolate = EngineScope::currentRuntimeIsolateChecked();
+    auto                  isolate = EngineScope::currentEngineIsolateChecked();
     v8::String::Utf8Value utf8(isolate, val);
     if (*utf8 == nullptr) {
         throw Exception("Cannot convert v8::String to std::string");
@@ -178,7 +178,7 @@ IMPL_SPECIALIZATION_LOCAL(Symbol);
 IMPL_SPECALIZATION_AS_VALUE(Symbol);
 IMPL_SPECALIZATION_V8_LOCAL_TYPE(Symbol);
 Local<Value> Local<Symbol>::getDescription() {
-    auto isolate = EngineScope::currentRuntimeIsolateChecked();
+    auto isolate = EngineScope::currentEngineIsolateChecked();
     auto maybe   = val->Description(isolate);
     return Local<Value>{maybe};
 }
