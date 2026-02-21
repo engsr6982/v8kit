@@ -3,7 +3,7 @@
 
 #include <type_traits>
 
-namespace v8kit {
+namespace v8kit::binding {
 
 enum class ReturnValuePolicy : uint8_t {
     /**
@@ -48,8 +48,29 @@ enum class ReturnValuePolicy : uint8_t {
 };
 
 
+namespace traits {
+
 template <typename T>
 struct is_policy : std::is_same<std::decay_t<T>, ReturnValuePolicy> {};
 
+} // namespace traits
 
-} // namespace v8kit
+namespace detail {
+
+template <typename T>
+ReturnValuePolicy resolveAutomaticPolicy(ReturnValuePolicy policy) {
+    if (policy == ReturnValuePolicy::kAutomatic) {
+        if constexpr (std::is_pointer_v<T>) {
+            return ReturnValuePolicy::kTakeOwnership;
+        } else if constexpr (std::is_lvalue_reference_v<T>) {
+            return ReturnValuePolicy::kCopy;
+        } else if constexpr (std::is_rvalue_reference_v<T>) {
+            return ReturnValuePolicy::kMove;
+        }
+    }
+    return policy;
+}
+
+} // namespace detail
+
+} // namespace v8kit::binding

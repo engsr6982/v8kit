@@ -122,14 +122,14 @@ FunctionCallback wrapOverloadFunction(ReturnValuePolicy policy, Overload&&... fn
 
 template <typename... Overload>
 FunctionCallback wrapOverloadFuncAndExtraPolicy(Overload&&... fn) {
-    constexpr size_t policy_count = (static_cast<size_t>(is_policy<Overload>::value) + ...);
+    constexpr size_t policy_count = (static_cast<size_t>(traits::is_policy<Overload>::value) + ...);
     static_assert(policy_count <= 1, "ReturnValuePolicy can only appear once in argument list");
 
     ReturnValuePolicy policy = ReturnValuePolicy::kAutomatic;
     if constexpr (policy_count > 0) {
         (
             [&](auto&& arg) {
-                if constexpr (is_policy<decltype(arg)>::value) {
+                if constexpr (traits::is_policy<decltype(arg)>::value) {
                     policy = arg;
                 }
             }(fn),
@@ -145,7 +145,7 @@ FunctionCallback wrapOverloadFuncAndExtraPolicy(Overload&&... fn) {
         size_t                                   idx = 0;
         (
             [&](auto&& arg) {
-                if constexpr (!is_policy<decltype(arg)>::value) {
+                if constexpr (!traits::is_policy<decltype(arg)>::value) {
                     arr[idx++] = wrapFunction(std::forward<decltype(arg)>(arg), policy);
                 }
             }(std::forward<Overload>(fn)),

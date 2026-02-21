@@ -4,6 +4,7 @@
 #include "traits/Polymorphic.h"
 #include "traits/TypeTraits.h"
 #include "v8kit/core/Exception.h"
+#include "v8kit/core/InstancePayload.h"
 #include "v8kit/core/Reference.h"
 #include "v8kit/core/Value.h"
 
@@ -94,146 +95,63 @@ template <typename T>
 
 namespace detail {
 
-struct ResolvedCastSource {
-    const void*      ptr;           // 最终决定使用的 C++ 指针（可能经过了偏移）
-    ClassMeta const* meta;          // 最终决定使用的 JS 类定义
-    bool             is_downcasted; // 是否发生了成功的多态向下转型
-};
-
-template <typename T>
-ResolvedCastSource resolveCastSource(T* value) {
-    auto& engine = EngineScope::currentRuntimeChecked();
-
-    // 1. 获取动态类型和基址
-    const std::type_info* dynamicType = nullptr;
-    const void*           dynamicPtr  = traits::PolymorphicTypeHook<T>::get(value, dynamicType);
-
-    // 2. 尝试决议动态类型 (Downcast)
-    if (dynamicType && dynamicPtr) {
-        if (auto* meta = engine.getClassDefine(std::type_index(*dynamicType))) {
-            return {dynamicPtr, meta, true}; // 完美命中子类
-        }
-    }
-
-    // 3. Fallback 回退到静态类型 (Original)
-    std::type_index staticIdx(typeid(T));
-    auto*           staticMeta = engine.getClassDefine(staticIdx);
-    if (!staticMeta) {
-        throw Exception("Class not registered: " + std::string(staticIdx.name()));
-    }
-
-    return {static_cast<const void*>(value), staticMeta, false};
-}
 
 template <typename T>
 struct GenericTypeConverter {
     template <typename U>
     static ReturnValuePolicy handleAutomaticPolicy(ReturnValuePolicy policy) {
-        // @see ReturnValuePolicy::kAutomatic comment
-        if (policy == ReturnValuePolicy::kAutomatic) {
-            if constexpr (std::is_pointer_v<U>) {
-                return ReturnValuePolicy::kTakeOwnership;
-            } else if constexpr (std::is_lvalue_reference_v<U>) {
-                return ReturnValuePolicy::kCopy;
-            } else if constexpr (std::is_rvalue_reference_v<U>) {
-                return ReturnValuePolicy::kMove;
-            }
-        }
-        return policy;
+        return detail::resolveAutomaticPolicy<U>(policy);
     }
 
     // C++ -> JS
     static Local<Value> toJs(T&& value, ReturnValuePolicy policy, Local<Value> parent) {
-        using RawType     = std::decay_t<T>;
-        using ElementType = std::remove_pointer_t<RawType>;
-        policy            = handleAutomaticPolicy<T>(policy);
+        using RawType = std::decay_t<T>;
+        policy        = handleAutomaticPolicy<T>(policy);
 
-        // 剥离引用/指针，获取底层裸指针进行多态决议
+        using ElementType   = typename traits::detail::ElementTypeExtractor<RawType>::type;
         ElementType* rawPtr = nullptr;
+
         if constexpr (std::is_pointer_v<RawType>) {
             rawPtr = value;
+            if (!rawPtr) return Null::newNull();
+        } else if constexpr (traits::is_unique_ptr_v<RawType> || traits::is_shared_ptr_v<RawType>) {
+            rawPtr = value.get();
             if (!rawPtr) return Null::newNull();
         } else {
             rawPtr = &value;
         }
 
-        auto resolved = detail::resolveCastSource<ElementType>(rawPtr);
+        // 查表：解析对象的最终多态 Meta 和首地址偏移
+        auto resolved = traits::detail::resolveCastSource<ElementType>(rawPtr);
 
-        std::unique_ptr<NativeInstance> instance;
+        // 创建包装着 C++ 实例的底座 (NativeInstance)
+        auto instance = factory::createNativeInstance(std::forward<T>(value), policy, resolved);
+        if (!instance) return Null::newNull();
 
-        auto createImpl = [&](auto&& holder) {
-            using HolderT = std::decay_t<decltype(holder)>;
-            // 这里我们统一把 holder 存为声明类型 ElementType，但赋予它多态的 Meta
-            // C++ 层用基类指针操作，JS 层用子类 Prototype 操作，完美契合！
-            return std::make_unique<NativeInstanceImpl<ElementType, HolderT>>(
-                resolved.meta,
-                std::forward<decltype(holder)>(holder)
-            );
-        };
-
-        switch (policy) {
-        case ReturnValuePolicy::kCopy:
-            // 【注意切片问题】这里暂时只做基类拷贝，如果你需要完整多态拷贝，
-            // 必须像 pybind11 那样在 Meta 中注册拷贝构造钩子，或者要求用户提供 clone()。
-            if (resolved.is_downcasted) {
-                // 如果发生了多态决议且要求 Copy，为了防止切片，你可以先抛错拦截，或者调用虚拟 clone()
-                throw Exception("Copying polymorphic objects requires a clone mechanism to prevent slicing.");
-            }
-            if constexpr (std::is_copy_constructible_v<ElementType>) {
-                instance = createImpl(std::make_unique<ElementType>(*rawPtr));
-            } else {
-                throw Exception("Object is not copy constructible");
-            }
-            break;
-
-        case ReturnValuePolicy::kMove:
-            // 同理，移动多态对象也会切片
-            if constexpr (std::is_move_constructible_v<ElementType>) {
-                instance = createImpl(std::make_unique<ElementType>(std::move(*rawPtr)));
-            }
-            break;
-
-        case ReturnValuePolicy::kTakeOwnership:
-            if constexpr (std::is_pointer_v<RawType>) {
-                instance = createImpl(std::unique_ptr<ElementType>(value));
-            } else {
-                throw Exception("Cannot take ownership of non-pointer");
-            }
-            break;
-
-        case ReturnValuePolicy::kReference:
-        case ReturnValuePolicy::kReferenceInternal:
-            // 引用策略最简单，直接持有裸指针
-            instance = createImpl(rawPtr);
-            break;
-
-        default:
-            break;
-        }
-
-        // 4. 交给引擎组装 JS 对象
         auto&         engine = EngineScope::currentRuntimeChecked();
         Local<Object> jsObj  = engine.newInstance(*resolved.meta, std::move(instance));
 
-        // 5. Keep Alive 逻辑
         if (policy == ReturnValuePolicy::kReferenceInternal) {
-            // ... 处理保活 ...
+            if (!parent.isObject()) {
+                throw Exception("kReferenceInternal requires a valid parent object");
+            }
+            if (!engine.trySetReferenceInternal(parent.asObject(), jsObj)) {
+                throw Exception("Failed to set reference internal");
+            }
         }
-
         return jsObj;
     }
 
     // JS -> C++
     static T* toCpp(Local<Value> const& value) {
-        // 获取 Payload
-        // auto* payload = internal::getPayload(value);
-        // if (!payload) throw Exception("Not a native instance");
-        //
-        // // 使用 unwrap，它会调用 NativeInstance::cast -> Meta::castTo
-        // // 自动处理继承偏移
-        // T* ptr = payload->getHolder()->unwrap<T>();
-        // if (!ptr) throw Exception("Type mismatch or cast failed");
-        // return ptr;
+        auto& engine  = EngineScope::currentRuntimeChecked();
+        auto  payload = engine.getInstancePayload(value.asObject());
+        if (!payload) {
+            throw Exception("Argument is not a native instance");
+        }
+        auto ptr = payload->getHolder()->unwrap<T>();
+        if (!ptr) throw Exception("Type mismatch or cast failed");
+        return ptr;
     }
 };
 

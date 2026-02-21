@@ -1,8 +1,13 @@
 #pragma once
-#include "traits/TypeTraits.h"
 #include "v8kit/core/Exception.h"
 #include "v8kit/core/MetaInfo.h"
 #include "v8kit/core/NativeInstance.h"
+#include "v8kit/core/Reference.h"
+#include "v8kit/core/Value.h"
+
+#include "ReturnValuePolicy.h"
+#include "traits/Polymorphic.h"
+#include "traits/TypeTraits.h"
 
 #include <memory>
 #include <type_traits>
@@ -26,18 +31,11 @@ public:
         element_type;
 
     Holder value_;
-    bool   takeOwnership_ = false;
 
-    explicit NativeInstanceImpl(ClassMeta const* meta, Holder value)
-        requires traits::is_unique_ptr_v<T>
-    : NativeInstance(meta),
-      value_(std::move(value)),
-      takeOwnership_(true) {}
+    explicit NativeInstanceImpl(ClassMeta const* meta, Holder value) : NativeInstance(meta), value_(std::move(value)) {}
 
-    explicit NativeInstanceImpl(ClassMeta const* meta, Holder value, bool takeOwnership)
-    : NativeInstance(meta),
-      value_(std::move(value)),
-      takeOwnership_(takeOwnership) {}
+    ~NativeInstanceImpl() override = default;
+
 
     std::type_index type_id() const override { return std::type_index(typeid(std::remove_cv_t<ElementType>)); }
 
@@ -82,7 +80,7 @@ public:
         throw Exception("Object is not copy constructible");
     }
 
-    bool is_owned() const override { return takeOwnership_; }
+    bool is_owned() const override { return traits::is_unique_ptr_v<Holder>; }
 
 private:
     ElementType* get_raw_ptr() const {
@@ -95,14 +93,120 @@ private:
 };
 
 
+namespace traits::detail {
+// 专门用于提取 裸指针、值、以及智能指针的底层元素类型
+template <typename U>
+struct ElementTypeExtractor {
+    using type = std::remove_pointer_t<U>;
+};
+
+template <typename U>
+    requires traits::is_unique_ptr_v<U> || traits::is_shared_ptr_v<U>
+struct ElementTypeExtractor<U> {
+    using type = typename U::element_type;
+};
+} // namespace traits::detail
+
 namespace factory {
 
 
+/**
+ * @brief 根据给定的 C++ 值、策略和决议后的类型，生成底层的 NativeInstance 实例
+ */
+template <typename T>
+std::unique_ptr<NativeInstance>
+createNativeInstance(T&& value, ReturnValuePolicy policy, traits::detail::ResolvedCastSource const& resolved) {
+    using RawType     = std::decay_t<T>;
+    using ElementType = typename traits::detail::ElementTypeExtractor<RawType>::type;
 
+    // 提取裸指针用于构建 Holder
+    ElementType* rawPtr = nullptr;
+    if constexpr (std::is_pointer_v<RawType>) {
+        rawPtr = value;
+        if (!rawPtr) return nullptr;
+    } else if constexpr (traits::is_unique_ptr_v<RawType> || traits::is_shared_ptr_v<RawType>) {
+        rawPtr = value.get();
+        if (!rawPtr) return nullptr;
+    } else {
+        rawPtr = &value;
+    }
 
+    // 辅助创建器，自动推导 Holder 类型
+    auto createImpl = [&](auto&& holder) {
+        using HolderT = std::decay_t<decltype(holder)>;
+        // NativeInstanceImpl 的 is_owned 已经根据 HolderT (is_unique_ptr_v) 实现了自动推导
+        return std::make_unique<NativeInstanceImpl<ElementType, HolderT>>(
+            resolved.meta,
+            std::forward<decltype(holder)>(holder)
+        );
+    };
 
+    // 根据策略处理对象的所有权和生命周期
+    switch (policy) {
+    case ReturnValuePolicy::kCopy:
+        if (resolved.is_downcasted) {
+            auto copy = resolved.meta->instanceMeta_.copyCloneCtor_;
+            if (!copy) {
+                throw Exception("Polymorphic type '" + resolved.meta->name_ + "' is not copy constructible");
+            }
+            void* cloned = copy(resolved.ptr);
 
+            // 将 Derived* 偏移回 Base* (ElementType*)
+            void* base = resolved.meta->castTo(cloned, typeid(ElementType));
+            if (!base) {
+                throw Exception("Failed to upcast cloned polymorphic object to base type");
+            }
+            ElementType* finalPtr = static_cast<ElementType*>(base);
+            return createImpl(std::unique_ptr<ElementType>(finalPtr));
+        }
+        // 非多态，普通拷贝
+        if constexpr (std::is_copy_constructible_v<ElementType>) {
+            return createImpl(std::make_unique<ElementType>(*rawPtr));
+        } else {
+            throw Exception("Object is not copy constructible");
+        }
+
+    case ReturnValuePolicy::kMove:
+        if (resolved.is_downcasted) {
+            auto copy = resolved.meta->instanceMeta_.moveCloneCtor_;
+            if (!copy) {
+                throw Exception("Polymorphic type '" + resolved.meta->name_ + "' is not move constructible");
+            }
+            void* cloned = copy(const_cast<void*>(resolved.ptr));
+            // 将 Derived* 偏移回 Base* (ElementType*)
+            void* base = resolved.meta->castTo(cloned, typeid(ElementType));
+            if (!base) {
+                throw Exception("Failed to upcast cloned polymorphic object to base type");
+            }
+            ElementType* finalPtr = static_cast<ElementType*>(base);
+            return createImpl(std::unique_ptr<ElementType>(finalPtr));
+        }
+
+        if constexpr (std::is_move_constructible_v<ElementType>) {
+            return createImpl(std::make_unique<ElementType>(std::move(*rawPtr)));
+        } else {
+            throw Exception("Object is not move constructible");
+        }
+
+    case ReturnValuePolicy::kTakeOwnership:
+        if constexpr (std::is_pointer_v<RawType>) {
+            return createImpl(std::unique_ptr<ElementType>(value));
+        } else {
+            throw Exception("Cannot take ownership of non-pointer");
+        }
+
+    case ReturnValuePolicy::kReference:
+    case ReturnValuePolicy::kReferenceInternal:
+        // 引用持有裸指针 (takeOwnership = false)
+        return createImpl(rawPtr);
+
+    default:
+        [[unlikely]] throw Exception("Unknown return value policy");
+    }
 }
+
+
+} // namespace factory
 
 
 } // namespace v8kit::binding
