@@ -28,6 +28,16 @@ SetterCallback wrapSetter(Fn&& setter);
 template <typename Ty, bool forceReadonly = false>
 std::pair<GetterCallback, SetterCallback> wrapStaticMember(Ty&& member, ReturnValuePolicy policy);
 
+
+template <typename C, typename... Args>
+ConstructorCallback wrapConstructor();
+
+template <typename C, typename Fn>
+InstanceMethodCallback wrapInstanceMethod(Fn&& fn, ReturnValuePolicy policy);
+
+template <typename C, typename... Overload>
+InstanceMethodCallback wrapOverloadMethodAndExtraPolicy(Overload&&... fn);
+
 } // namespace adapter
 
 

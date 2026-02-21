@@ -40,7 +40,7 @@ class ClassMetaBuilder {
 
     template <ConstructorKind OtherState>
     explicit ClassMetaBuilder(ClassMetaBuilder<T, OtherState>&& other) noexcept
-    : name_(std::move(other.className_)),
+    : name_(std::move(other.name_)),
       staticProperty_(std::move(other.staticProperty_)),
       staticFunctions_(std::move(other.staticFunctions_)),
       instanceProperty_(std::move(other.instanceProperty_)),
@@ -81,13 +81,10 @@ public:
         }
     }
 
-    // func -> any static function or free function
-    // var -> any static property
-    // var_readonly -> readonly static property
-    // ctor -> constructor
-    // method -> any instance method
-    // prop -> any instance property
-    // prop_readonly -> readonly instance property
+
+    // -----------
+    // static
+    // -----------
 
     auto& func(std::string name, FunctionCallback fn) {
         staticFunctions_.emplace_back(std::move(name), std::move(fn));
@@ -163,64 +160,123 @@ public:
     // instance
     // -----------
 
-    // auto ctor(std::nullptr_t)
-    //     requires(isInstanceClass && K == ConstructorKind::kNone)
-    // {
-    //     userDefinedConstructor_ = [](Arguments const&) { return nullptr; };
-    //     ClassMetaBuilder<T, ConstructorKind::kDisabled> builder{std::move(*this)};
-    //     return builder; // NRVO/move
-    // }
-    //
-    // auto ctor(ConstructorCallback fn)
-    //     requires(isInstanceClass && K == ConstructorKind::kNone)
-    // {
-    //     userDefinedConstructor_ = std::move(fn);
-    //     ClassMetaBuilder<T, ConstructorKind::kCustom> builder{std::move(*this)};
-    //     return builder; // NRVO/move
-    // }
-    //
-    // template <typename... Args>
-    // decltype(auto) ctor()
-    //     requires(isInstanceClass && (K == ConstructorKind::kNone || K == ConstructorKind::kNormal))
-    // {
-    //     static_assert(std::is_constructible_v<T, Args...>, "Class must be constructible from Args...");
-    //     static_assert(!std::is_aggregate_v<T>, "Binding ctor requires explicit constructor, not aggregate class");
-    //
-    //     if constexpr (K == ConstructorKind::kNormal) {
-    //         return *this;
-    //     } else {
-    //         ClassMetaBuilder<T, ConstructorKind::kNormal> builder{std::move(*this)};
-    //         return builder; // NRVO/move
-    //     }
-    // }
-    //
-    // template <typename P>
-    // auto& inherit(ClassMeta const& meta)
-    //     requires isInstanceClass // 仅实例类允许继承
-    // {
-    //     if (base_) { // 重复继承
-    //         throw std::invalid_argument("class can only inherit one base class");
-    //     }
-    //     std::type_index type = typeid(P);
-    //     if (meta.typeId_ != type) { // 拿错类元信息?
-    //         throw std::invalid_argument("base class meta mismatch");
-    //     }
-    //     if (!meta.hasConstructor()) { // 父类是静态类
-    //         throw std::invalid_argument("base class has no constructor");
-    //     }
-    //     static_assert(std::derived_from<T, P>, "Illegal inheritance relationship");
-    //
-    //     base_     = &meta;
-    //     upcaster_ = [](void* ptr) -> void* {
-    //         T* derived = static_cast<T*>(ptr);
-    //         P* base    = static_cast<P*>(derived);
-    //         return base;
-    //     };
-    //     return *this;
-    // }
+    auto ctor(std::nullptr_t)
+        requires(isInstanceClass && K == ConstructorKind::kNone)
+    {
+        userDefinedConstructor_ = [](Arguments const&) { return nullptr; };
+        ClassMetaBuilder<T, ConstructorKind::kDisabled> builder{std::move(*this)};
+        return builder; // NRVO/move
+    }
 
+    auto ctor(ConstructorCallback fn)
+        requires(isInstanceClass && K == ConstructorKind::kNone)
+    {
+        userDefinedConstructor_ = std::move(fn);
+        ClassMetaBuilder<T, ConstructorKind::kCustom> builder{std::move(*this)};
+        return builder; // NRVO/move
+    }
+
+    template <typename... Args>
+    decltype(auto) ctor()
+        requires(isInstanceClass && (K == ConstructorKind::kNone || K == ConstructorKind::kNormal))
+    {
+        static_assert(std::is_constructible_v<T, Args...>, "Class must be constructible from Args...");
+        static_assert(!std::is_aggregate_v<T>, "Binding ctor requires explicit constructor, not aggregate class");
+
+        auto fn = adapter::wrapConstructor<T, Args...>();
+        constructors_.emplace_back(std::move(fn));
+
+        if constexpr (K == ConstructorKind::kNormal) {
+            return *this;
+        } else {
+            ClassMetaBuilder<T, ConstructorKind::kNormal> builder{std::move(*this)};
+            return builder; // NRVO/move
+        }
+    }
+
+    template <typename P>
+    auto& inherit(ClassMeta const& meta)
+        requires isInstanceClass // 仅实例类允许继承
+    {
+        if (base_) { // 重复继承
+            throw std::invalid_argument("class can only inherit one base class");
+        }
+        std::type_index type = typeid(P);
+        if (meta.typeId_ != type) { // 拿错类元信息?
+            throw std::invalid_argument("base class meta mismatch");
+        }
+        if (!meta.hasConstructor()) { // 父类是静态类
+            throw std::invalid_argument("base class has no constructor");
+        }
+        static_assert(std::is_base_of_v<P, T>, "Illegal inheritance relationship");
+        static_assert(!std::is_same_v<P, T>, "Identity inheritance is not allowed. Use multiple .ctor() calls.");
+
+        base_     = &meta;
+        upcaster_ = [](void* ptr) -> void* {
+            T* derived = static_cast<T*>(ptr);
+            P* base    = static_cast<P*>(derived);
+            return base;
+        };
+        return *this;
+    }
+
+
+    auto& method(std::string name, InstanceMethodCallback fn)
+        requires isInstanceClass
+    {
+        instanceFunctions_.emplace_back(std::move(name), std::move(fn));
+        return *this;
+    }
+
+    template <typename Fn>
+    auto& method(std::string name, Fn&& fn, ReturnValuePolicy policy = ReturnValuePolicy::kAutomatic)
+        requires isInstanceClass
+    {
+        auto f = adapter::wrapInstanceMethod<T>(std::forward<Fn>(fn), policy);
+        instanceFunctions_.emplace_back(std::move(name), std::move(f));
+        return *this;
+    }
+
+    template <typename... Fn>
+    auto& method(std::string name, Fn&&... fn)
+        requires(sizeof...(Fn) > 1 && isInstanceClass)
+    {
+        auto f = adapter::wrapOverloadMethodAndExtraPolicy<T>(std::forward<Fn>(fn)...);
+        instanceFunctions_.emplace_back(std::move(name), std::move(f));
+        return *this;
+    }
+
+    // prop
+    // prop_readonly
 
     [[nodiscard]] ClassMeta build() {
+        ConstructorCallback constructorCallback = nullptr;
+        if constexpr (isInstanceClass) {
+            static_assert(K != ConstructorKind::kNone, "No constructor provided");
+            if constexpr (K == ConstructorKind::kCustom || K == ConstructorKind::kDisabled) {
+                constructorCallback = std::move(userDefinedConstructor_);
+            } else { // Normal
+                if (constructors_.empty()) {
+                    throw std::invalid_argument("No constructor provided");
+                }
+                if (constructors_.size() == 1) {
+                    // 没有重载构造函数，直接传递，避免无意义的尝试
+                    constructorCallback = std::move(constructors_.front());
+                } else {
+                    constructorCallback =
+                        [fn = std::move(constructors_)](Arguments const& arguments) -> std::unique_ptr<NativeInstance> {
+                        for (auto const& f : fn) {
+                            try {
+                                if (auto holder = std::invoke(f, arguments)) {
+                                    return std::move(holder);
+                                }
+                            } catch (Exception const&) {}
+                        }
+                        return nullptr;
+                    };
+                }
+            }
+        }
 
         InstanceMemberMeta::InstanceEqualsCallback equalsCallback = nullptr;
         InstanceMemberMeta::CopyCloneCtor          copyCloneCtor  = nullptr;
@@ -242,7 +298,7 @@ public:
             std::move(name_),
             StaticMemberMeta{std::move(staticProperty_), std::move(staticFunctions_)},
             InstanceMemberMeta{
-                             std::move(userDefinedConstructor_),
+                             std::move(constructorCallback),
                              std::move(instanceProperty_),
                              std::move(instanceFunctions_),
                              traits::size_of_v<T>,

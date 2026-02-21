@@ -15,7 +15,7 @@
 #include <iostream>
 
 
-namespace {
+namespace ut {
 
 using namespace v8kit;
 using namespace v8kit::binding;
@@ -196,15 +196,250 @@ public:
 
     SimpleClass(std::string name) : id_(0), name_(std::move(name)) {}
     SimpleClass(int id, std::string name) : id_(id), name_(std::move(name)) {}
+
+    static Local<Value> getIdScript(InstancePayload& payload, Arguments const& /*arguments*/) {
+        auto t = payload.unwrap<SimpleClass>();
+        if (!t) throw Exception{"Accessing destroyed instance"};
+        return Number::newNumber(t->id_);
+    }
+
+    int  getId() const { return id_; }
+    void setId(int id) { id_ = id; }
+
+    std::string const& getName() const { return name_; }
+    void               setName(std::string name) { name_ = std::move(name); }
 };
-auto SimpleClassMeta = defClass<SimpleClass>("SimpleClass")
-                           // .ctor(nullptr)
-                           // .ctor([](Arguments const& arguments) -> std::unique_ptr<NativeInstance> {
-                           //
-                           // })
-                           // .ctor<std::string>()
-                           .build();
-TEST_CASE_METHOD(BindingTestFixture, "Simple Class") {}
 
 
-} // namespace
+SimpleClass& getSimpleClass() {
+    static SimpleClass instance{"hello"};
+    return instance;
+}
+SimpleClass const& getSimpleClassConst() { return getSimpleClass(); }
+
+auto DisableCtorTestMeta = defClass<SimpleClass>("DisableCtorSimpleClass")
+                               .ctor(nullptr)
+                               // 这里的 readonly 是相对于 JS 属性而非对象
+                               .var_readonly(
+                                   "inst",
+                                   &getSimpleClass,
+                                   // 默认对于左值是拷贝，但是对于全局单例，显式指定引用。
+                                   ReturnValuePolicy::kReference
+                               )
+                               // 这里的 readonly 是真只读，保留了 const 修饰
+                               .var_readonly("inst_const", &getSimpleClassConst, ReturnValuePolicy::kReference)
+                               .method("getId", &SimpleClass::getId)
+                               .method("setId", &SimpleClass::setId)
+                               .method("getName", &SimpleClass::getName)
+                               .method("setName", &SimpleClass::setName)
+                               .build();
+TEST_CASE_METHOD(BindingTestFixture, "Disallow script constructor and verify real reference") {
+    EngineScope scope{engine.get()};
+    engine->registerClass(DisableCtorTestMeta);
+
+    // 不允许脚本构造
+    REQUIRE_THROWS_MATCHES(
+        engine->eval(String::newString("new DisableCtorSimpleClass()")),
+        Exception,
+        Catch::Matchers::Message("Uncaught Error: This native class cannot be constructed.")
+    );
+
+    // 访问 C++ 已有实例
+    REQUIRE_EVAL("DisableCtorSimpleClass.inst.getName() == 'hello'", "initial name check");
+
+    // 确认引用语义
+    engine->eval(String::newString(R"(
+        let obj = DisableCtorSimpleClass.inst;
+        obj.setName("world");
+    )"));
+
+    const auto& cpp_instance = getSimpleClassConst();
+    REQUIRE(cpp_instance.getName() == "world");
+
+    REQUIRE_EVAL("DisableCtorSimpleClass.inst.getName() == 'world'", "modified name check");
+
+    REQUIRE_NOTHROW(engine->eval(String::newString(R"(
+        DisableCtorSimpleClass.inst.setId(123456);
+    )")));
+    REQUIRE(cpp_instance.getId() == 123456);
+    REQUIRE_EVAL("DisableCtorSimpleClass.inst.getId() == 123456", "modified id check");
+
+    // 确认 const 语义被保留
+    REQUIRE_THROWS_MATCHES(
+        engine->eval(String::newString("DisableCtorSimpleClass.inst_const.setId(123456);")),
+        Exception,
+        Catch::Matchers::Message("Uncaught Error: Cannot unwrap const instance to mutable pointer")
+    );
+}
+
+
+auto BindCtorTestMeta = defClass<SimpleClass>("BindCtorSimpleClass")
+                            .ctor<std::string>()
+                            .ctor<int, std::string>()
+                            .method("getId", &SimpleClass::getId)
+                            .method("setId", &SimpleClass::setId)
+                            .method("getName", &SimpleClass::getName)
+                            .method("setName", &SimpleClass::setName)
+                            .build();
+TEST_CASE_METHOD(BindingTestFixture, "bind overload constructor") {
+    EngineScope scope{engine.get()};
+
+    engine->registerClass(BindCtorTestMeta);
+
+    REQUIRE_EVAL(
+        "new BindCtorSimpleClass('hello').getName() == 'hello'",
+        "call SimpleClass constructor with 1 arguments"
+    );
+    REQUIRE_EVAL(
+        "new BindCtorSimpleClass(123, 'hello').getId() == 123",
+        "call SimpleClass constructor with 2 arguments"
+    );
+    REQUIRE_THROWS_MATCHES(
+        engine->eval(String::newString("new BindCtorSimpleClass()")),
+        Exception,
+        Catch::Matchers::Message("Uncaught Error: This native class cannot be constructed.")
+    );
+}
+
+
+auto CustomCtorTestMeta = defClass<SimpleClass>("CustomCtorSimpleClass")
+                              .ctor([](Arguments const& arguments) -> std::unique_ptr<NativeInstance> {
+                                  if (arguments.length() == 1) {
+                                      auto str = arguments[0].asString();
+                                      return factory::newNativeInstance<SimpleClass>(str.getValue());
+                                  }
+                                  if (arguments.length() == 2) {
+                                      auto id  = arguments[0].asNumber().getInt32();
+                                      auto str = arguments[1].asString();
+                                      return factory::newNativeInstance<SimpleClass>(id, str.getValue());
+                                  }
+                                  return nullptr;
+                              })
+                              .method("getId", &SimpleClass::getId)
+                              .method("setId", &SimpleClass::setId)
+                              .method("getName", &SimpleClass::getName)
+                              .method("setName", &SimpleClass::setName)
+                              .build();
+TEST_CASE_METHOD(BindingTestFixture, "bind custom constructor") {
+    EngineScope scope{engine.get()};
+    engine->registerClass(CustomCtorTestMeta);
+    REQUIRE_EVAL(
+        "new CustomCtorSimpleClass('hello').getName() == 'hello'",
+        "call SimpleClass constructor with 1 arguments"
+    );
+    REQUIRE_EVAL(
+        "new CustomCtorSimpleClass(123, 'hello').getId() == 123",
+        "call SimpleClass constructor with 2 arguments"
+    );
+    REQUIRE_THROWS_MATCHES(
+        engine->eval(String::newString("new CustomCtorSimpleClass()")),
+        Exception,
+        Catch::Matchers::Message("Uncaught Error: This native class cannot be constructed.")
+    );
+}
+
+
+// 验证重载和 Builder 模式兼容性
+class MessageStream {
+    std::ostringstream oss;
+
+public:
+    MessageStream() = default;
+
+    MessageStream& write(std::string_view str) {
+        oss << str;
+        return *this;
+    }
+    MessageStream& write(int num) {
+        oss << num;
+        return *this;
+    }
+    std::string str() const { return oss.str(); }
+};
+auto MessageStreamMeta =
+    defClass<MessageStream>("MessageStream")
+        .ctor()
+        .method(
+            "write",
+            static_cast<MessageStream& (MessageStream::*)(std::string_view)>(&MessageStream::write),
+            static_cast<MessageStream& (MessageStream::*)(int)>(&MessageStream::write)
+        )
+        .method("str", &MessageStream::str)
+        .build();
+TEST_CASE_METHOD(BindingTestFixture, "overload and builder mode compatibility") {
+    EngineScope scope{engine.get()};
+    engine->registerClass(MessageStreamMeta);
+
+    REQUIRE_NOTHROW(engine->eval(String::newString("new MessageStream().write('hello').write(123).str() == 'hello123'"))
+    );
+
+    REQUIRE_EVAL("new MessageStream().write('test').str() == 'test'", "string overload check");
+    REQUIRE_EVAL("new MessageStream().write(456).str() == '456'", "int overload check");
+}
+
+
+// TODO:
+// ### 4.1.2 普通类继承绑定
+// - 测试点：
+//     - 子类可自动向上转为父类
+//     - 子类可调用父类方法
+//     - 类型信息不丢失
+//     - 方法、属性继承正确
+// - 判定标准：脚本层 `instanceof` 完全符合 C++ 继承关系
+
+// ### 4.1.3 接口/抽象类绑定
+// - 测试点：
+//     - 禁止 JS 直接 `new`
+//     - 只能通过 C++ 返回指针/引用
+//     - 不生成拷贝、赋值逻辑
+// - 判定标准：JS 构造抛异常，只能以指针形式存在
+
+// ### 4.1.4 pImpl 类绑定兼容
+// - 测试点：
+//     - 外部类不触发浅拷贝/深拷贝
+//     - 编译不报 `incomplete type`
+//     - 不提前析构内部实现
+// - 判定标准：编译通过、运行稳定、无内存错误
+
+// ## 4.2 多态与继承安全
+// ### 4.2.1 多态类绑定
+// - 测试点：
+//     - `Base*` 指向子类时能自动识别真实类型
+//     - 多态钩子生效
+//     - `dynamic_cast<void*>` 正确
+// - 判定标准：脚本层能看到完整子类类型
+
+// ### 4.2.2 多继承绑定
+// - 测试点：
+//     - 从任意父类 unwrap 都能得到正确真实对象
+//     - 指针偏移计算正确
+//     - 不出现野指针、交叉强转崩溃
+// - 判定标准：所有父类指针转换稳定、结果一致
+
+// ## 4.3 脚本行为与语义
+// ### 4.3.1 脚本层继承关系验证
+// - 测试点：
+//     - `obj instanceof Base`
+//     - `obj instanceof Derived`
+//     - 原型链正确
+// - 判定标准：与 C++ 继承树完全一致
+
+// ### 4.3.2 实例等同比较 `$equals`
+// - 测试点：
+//     - 同一 C++ 实例 → `true`
+//     - 不同实例 → `false`
+//     - 不比较 JS 对象地址
+// - 判定标准：按底层原生指针比较
+
+// ### 4.3.4 Return Value Policy 全覆盖
+// - 测试点：
+//     - `reference`：不接管、不释放
+//     - `copy`：脚本侧独立对象
+//     - `move`：原指针置空/失效
+//     - `take_ownership`：脚本 GC 后自动析构
+//     - `reference_internal`：宿主存活则有效
+// - 判定标准：所有权、生命周期、泄漏、有效性全部符合预期
+
+
+
+} // namespace ut

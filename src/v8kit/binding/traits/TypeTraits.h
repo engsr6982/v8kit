@@ -45,6 +45,11 @@ template <typename T>
 inline constexpr bool isSetterCallback_v =
     std::convertible_to<std::remove_cvref_t<T>, SetterCallback> || std::is_invocable_r_v<void, T, Local<Value> const&>;
 
+template <typename T>
+inline constexpr bool isInstanceMethodCallback_v =
+    std::convertible_to<std::remove_cvref_t<T>, InstanceMethodCallback>
+    || std::is_invocable_r_v<Local<Value>, T, InstancePayload&, Arguments const&>;
+
 
 // unique_ptr
 template <typename T>

@@ -6,6 +6,8 @@
 #include "v8kit/core/Reference.h"
 #include "v8kit/core/Value.h"
 
+#include <cassert>
+
 
 namespace v8kit::binding::adapter {
 
@@ -225,7 +227,7 @@ std::pair<GetterCallback, SetterCallback> wrapStaticMember(Ty&& member, ReturnVa
 
 
 template <typename C, typename... Args>
-ConstructorCallback bindConstructor() {
+ConstructorCallback wrapConstructor() {
     return [](Arguments const& args) -> std::unique_ptr<NativeInstance> {
         constexpr size_t N = sizeof...(Args);
         if constexpr (N == 0) {
@@ -234,7 +236,7 @@ ConstructorCallback bindConstructor() {
                 "Class C must have a no-argument constructor; otherwise, a constructor must be specified."
             );
             if (args.length() != 0) return nullptr; // Parameter mismatch
-            // return v8wrap::internal::factory::makeOwnedRaw(new C());
+            return factory::newNativeInstance<C>();
 
         } else {
             if (args.length() != N) return nullptr; // Parameter mismatch
@@ -244,14 +246,104 @@ ConstructorCallback bindConstructor() {
             auto parameters = ConvertArgsToTuple<Tuple>(args, std::make_index_sequence<N>());
             return std::apply(
                 [](auto&&... unpackedArgs) {
-                    auto rawPointer = new C(std::forward<decltype(unpackedArgs)>(unpackedArgs)...);
-                    // return v8wrap::internal::factory::makeOwnedRaw(rawPointer);
+                    return factory::newNativeInstance<C>(std::forward<decltype(unpackedArgs)>(unpackedArgs)...);
                 },
                 std::move(parameters)
             );
         }
     };
 }
+
+template <typename C, typename Fn>
+InstanceMethodCallback wrapInstanceMethod(Fn&& fn, ReturnValuePolicy policy) {
+    if constexpr (traits::isInstanceMethodCallback_v<Fn>) {
+        return std::forward<Fn>(fn); // 已是标准的回调，直接转发不需要进行绑定
+    }
+    return [f = std::forward<Fn>(fn), policy](InstancePayload& payload, const Arguments& args) -> Local<Value> {
+        using Trait = traits::FunctionTraits<std::decay_t<Fn>>;
+        using R     = typename Trait::ReturnType;
+        using Tuple = typename Trait::ArgsTuple;
+
+        constexpr size_t ArgsCount = Trait::ArgsCount;
+        if (args.length() != ArgsCount) [[unlikely]] {
+            throw Exception("argument count mismatch", Exception::Type::TypeError);
+        }
+
+        using UnwrapC = std::conditional_t<Trait::isConst, const C, C>;
+        UnwrapC* inst = payload.unwrap<UnwrapC>();
+        if (!inst) {
+            throw Exception{"Accessing destroyed instance", Exception::Type::TypeError};
+        }
+
+        if constexpr (std::is_void_v<R>) {
+            std::apply(
+                [inst, &f](auto&&... unpackedArgs) {
+                    (inst->*f)(std::forward<decltype(unpackedArgs)>(unpackedArgs)...);
+                },
+                ConvertArgsToTuple<Tuple>(args, std::make_index_sequence<ArgsCount>())
+            );
+            return {}; // undefined
+        } else {
+            decltype(auto) ret = std::apply(
+                [inst, &f](auto&&... unpackedArgs) -> R {
+                    return (inst->*f)(std::forward<decltype(unpackedArgs)>(unpackedArgs)...);
+                },
+                ConvertArgsToTuple<Tuple>(args, std::make_index_sequence<ArgsCount>())
+            );
+            // 特殊情况，对于 Builder 模式，返回 this
+            if constexpr (std::is_same_v<R, C&>) {
+                assert(args.hasThiz() && "this is required for Builder pattern");
+                return args.thiz();
+            } else {
+                return toJs(ret, policy, args.hasThiz() ? args.thiz() : Local<Value>{});
+            }
+        }
+    };
+}
+
+template <size_t Len>
+inline InstanceMethodCallback _mergeMethodCallbacks(std::array<InstanceMethodCallback, Len> overloads) {
+    return [fs = std::move(overloads)](InstancePayload& payload, Arguments const& args) -> Local<Value> {
+        return dispatchOverloadImpl<Local<Value>>(fs, payload, args);
+    };
+}
+
+template <typename C, typename... Overload>
+InstanceMethodCallback wrapOverloadMethodAndExtraPolicy(Overload&&... fn) {
+    constexpr size_t policy_count = (static_cast<size_t>(traits::is_policy<Overload>::value) + ...);
+    static_assert(policy_count <= 1, "ReturnValuePolicy can only appear once in argument list");
+
+    ReturnValuePolicy policy = ReturnValuePolicy::kAutomatic;
+    if constexpr (policy_count > 0) {
+        (
+            [&](auto&& arg) {
+                if constexpr (traits::is_policy<decltype(arg)>::value) {
+                    policy = arg;
+                }
+            }(fn),
+            ...
+        );
+    }
+
+    constexpr size_t func_count = sizeof...(Overload) - policy_count;
+    static_assert(func_count > 0, "No functions provided to overload");
+
+    auto overloads = [&]() {
+        std::array<InstanceMethodCallback, func_count> arr;
+        size_t                                         idx = 0;
+        (
+            [&](auto&& arg) {
+                if constexpr (!traits::is_policy<decltype(arg)>::value) {
+                    arr[idx++] = wrapInstanceMethod<C>(std::forward<decltype(arg)>(arg), policy);
+                }
+            }(std::forward<Overload>(fn)),
+            ...
+        );
+        return arr;
+    }();
+    return _mergeMethodCallbacks(std::move(overloads));
+}
+
 
 template <typename C>
 InstanceMemberMeta::InstanceEqualsCallback bindInstanceEqualsImpl(std::false_type) {
