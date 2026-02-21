@@ -25,14 +25,17 @@ namespace v8kit::binding {
 template <typename T, typename Holder>
 class NativeInstanceImpl final : public NativeInstance {
 public:
-    // 从 Holder 推导元素类型 (处理 T* vs shared_ptr<T> 的区别)
     using ElementType = typename std::pointer_traits<
         typename std::conditional<std::is_pointer_v<Holder>, Holder, typename Holder::element_type*>::type>::
         element_type;
 
     Holder value_;
+    void*  most_derived_ptr_;
 
-    explicit NativeInstanceImpl(ClassMeta const* meta, Holder value) : NativeInstance(meta), value_(std::move(value)) {}
+    explicit NativeInstanceImpl(ClassMeta const* meta, Holder value, void* most_derived_ptr)
+    : NativeInstance(meta),
+      value_(std::move(value)),
+      most_derived_ptr_(most_derived_ptr) {}
 
     ~NativeInstanceImpl() override = default;
 
@@ -42,20 +45,16 @@ public:
     bool is_const() const override { return std::is_const_v<ElementType>; }
 
     void* cast(std::type_index target_type) const override {
-        ElementType* ptr = get_raw_ptr();
-        if (!ptr) return nullptr;
-
+        // 如果请求的类型恰好是智能指针持有的静态声明类型 (例如 Base2)
+        // 直接返回底层的裸指针，因为智能指针知道自己准确的 Base2 地址，无需计算
         if (target_type == std::type_index(typeid(std::remove_cv_t<ElementType>))) {
-            return const_cast<void*>(static_cast<const void*>(ptr));
+            return const_cast<void*>(static_cast<const void*>(get_raw_ptr()));
         }
 
-        // 2. 继承路径：利用 ClassMeta 链进行安全的指针偏移
-        // 注意：这里传入的是 ptr (T*)，meta_->castTo 会利用 upcaster 一层层转上去
-        // 即使 ptr 是多重继承的中间部分，upcaster 也能把它修成 Base*
+        // 如果请求的是多态真实类型 (Derived) 或其他基类 (Base1)
+        // 必须从多态首地址 (most_derived_ptr_) 出发，利用 Meta 链条进行安全的 C++ castTo 偏移
         if (meta_) {
-            // 必须将 T* 转为 void* 传入，假设 Meta 注册的是 T 的 Meta
-            // 这里有个前提：meta_ 必须对应 T。如果 T 是多态获取的 Derived，meta_ 是 DerivedMeta。
-            return meta_->castTo(static_cast<void*>(ptr), target_type);
+            return meta_->castTo(most_derived_ptr_, target_type);
         }
         return nullptr;
     }
@@ -73,7 +72,8 @@ public:
             if (raw) {
                 return std::make_unique<NativeInstanceImpl<ElementType, std::unique_ptr<ElementType>>>(
                     meta_,
-                    std::make_unique<ElementType>(*raw)
+                    std::make_unique<ElementType>(*raw),
+                    most_derived_ptr_
                 );
             }
         }
@@ -122,10 +122,10 @@ createNativeInstance(T&& value, ReturnValuePolicy policy, traits::detail::Resolv
     // 辅助创建器，自动推导 Holder 类型
     auto createImpl = [&](auto&& holder) {
         using HolderT = std::decay_t<decltype(holder)>;
-        // NativeInstanceImpl 的 is_owned 已经根据 HolderT (is_unique_ptr_v) 实现了自动推导
         return std::make_unique<NativeInstanceImpl<ElementType, HolderT>>(
             resolved.meta,
-            std::forward<decltype(holder)>(holder)
+            std::forward<decltype(holder)>(holder),
+            const_cast<void*>(resolved.ptr)
         );
     };
 
