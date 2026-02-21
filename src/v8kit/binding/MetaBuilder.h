@@ -222,9 +222,20 @@ public:
 
     [[nodiscard]] ClassMeta build() {
 
-        InstanceMemberMeta::InstanceEqualsCallback equals_callback = nullptr;
+        InstanceMemberMeta::InstanceEqualsCallback equalsCallback = nullptr;
+        InstanceMemberMeta::CopyCloneCtor          copyCloneCtor  = nullptr;
+        InstanceMemberMeta::MoveCloneCtor          moveCloneCtor  = nullptr;
         if constexpr (isInstanceClass) {
-            equals_callback = adapter::bindInstanceEquals<T>();
+            equalsCallback = adapter::bindInstanceEquals<T>();
+            if constexpr (std::is_copy_constructible_v<T>) {
+                copyCloneCtor = [](const void* src) -> void* {
+                    // 把 void* 强转回确切的子类 T*，调用 T 的拷贝构造
+                    return new T(*static_cast<const T*>(src));
+                };
+            }
+            if constexpr (std::is_move_constructible_v<T>) {
+                moveCloneCtor = [](void* src) -> void* { return new T(std::move(*static_cast<T*>(src))); };
+            }
         }
 
         return ClassMeta{
@@ -235,7 +246,8 @@ public:
                              std::move(instanceProperty_),
                              std::move(instanceFunctions_),
                              traits::size_of_v<T>,
-                             equals_callback
+                             equalsCallback, copyCloneCtor,
+                             moveCloneCtor
             },
             base_,
             std::type_index{typeid(T)},

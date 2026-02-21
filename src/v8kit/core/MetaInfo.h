@@ -6,7 +6,6 @@
 
 namespace v8kit {
 
-
 struct StaticMemberMeta {
     struct Property {
         std::string const    name_;
@@ -18,6 +17,7 @@ struct StaticMemberMeta {
           getter_(std::move(getter)),
           setter_(std::move(setter)) {}
     };
+
     struct Function {
         std::string const      name_;
         FunctionCallback const callback_;
@@ -46,6 +46,7 @@ struct InstanceMemberMeta {
           getter_(std::move(getter)),
           setter_(std::move(setter)) {}
     };
+
     struct Method {
         std::string const            name_;
         InstanceMethodCallback const callback_;
@@ -64,18 +65,28 @@ struct InstanceMemberMeta {
     using InstanceEqualsCallback = bool (*)(void* lhs, void* rhs);
     InstanceEqualsCallback const equals_{nullptr};
 
+    // Type-erased dynamic copy/move constructors to preserve dynamic type
+    using CopyCloneCtor = void* (*)(void const* src);
+    using MoveCloneCtor = void* (*)(void* src);
+    CopyCloneCtor const copyCloneCtor_{nullptr};
+    MoveCloneCtor const moveCloneCtor_{nullptr};
+
     explicit InstanceMemberMeta(
         ConstructorCallback    constructor,
         std::vector<Property>  property,
         std::vector<Method>    functions,
         size_t                 classSize,
-        InstanceEqualsCallback equals
+        InstanceEqualsCallback equals,
+        CopyCloneCtor          copyCloneCtor = nullptr,
+        MoveCloneCtor          moveCloneCtor = nullptr
     )
     : constructor_(std::move(constructor)),
       property_(std::move(property)),
       methods_(std::move(functions)),
       classSize_(classSize),
-      equals_(equals) {}
+      equals_(equals),
+      copyCloneCtor_(copyCloneCtor),
+      moveCloneCtor_(moveCloneCtor) {}
 };
 
 struct ClassMeta {
