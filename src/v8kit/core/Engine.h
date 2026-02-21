@@ -71,11 +71,9 @@ public:
 
     [[nodiscard]] bool isInstanceOf(Local<Object> const& obj, ClassMeta const& meta) const;
 
-    // [[nodiscard]] internal::InstancePayload*
-    // getInternalInstancePayload(Local<Object> const& obj, ClassMeta const& def) const;
+    [[nodiscard]] InstancePayload* getInstancePayload(Local<Object> const& obj) const;
 
-    // [[nodiscard]] internal::SmartHolder*
-    // getInternalSmartHolder(Local<Object> const& obj, ClassMeta const& def) const;
+    [[nodiscard]] bool trySetReferenceInternal( Local<Object> const& parentObj, Local<Object> const& subObj);
 
 private:
     void setToStringTag(v8::Local<v8::FunctionTemplate>& obj, std::string_view name, bool hasConstructor);

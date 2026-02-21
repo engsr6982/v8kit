@@ -262,6 +262,32 @@ Local<Object> Engine::newInstance(ClassMeta const& meta, std::unique_ptr<NativeI
     return ValueHelper::wrap<Object>(val.ToLocalChecked());
 }
 
+InstancePayload* Engine::getInstancePayload(Local<Object> const& obj) const {
+    auto v8This = ValueHelper::unwrap(obj);
+    if (v8This->InternalFieldCount() < (int)InternalFieldSolt::Count) {
+        return nullptr;
+    }
+    auto payload = v8This->GetAlignedPointerFromInternalField(static_cast<int>(InternalFieldSolt::InstancePayload));
+    if (!payload) {
+        return nullptr;
+    }
+    return static_cast<InstancePayload*>(payload);
+}
+bool Engine::trySetReferenceInternal(Local<Object> const& parentObj, Local<Object> const& subObj) {
+    auto v8Parent = ValueHelper::unwrap(parentObj);
+    auto v8Child  = ValueHelper::unwrap(subObj);
+    if (v8Parent.IsEmpty() || v8Child.IsEmpty()) {
+        return false;
+    }
+
+    constexpr int count = static_cast<int>(InternalFieldSolt::Count);
+    if (v8Parent->InternalFieldCount() < count || v8Child->InternalFieldCount() < count) {
+        return false; // 非法对象
+    }
+    v8Child->SetInternalField(static_cast<int>(InternalFieldSolt::ParentClassThisRef), v8Parent);
+    return true;
+}
+
 
 void Engine::setToStringTag(v8::Local<v8::FunctionTemplate>& obj, std::string_view name, bool hasConstructor) {
     auto symbol = v8::Symbol::GetToStringTag(isolate_);
