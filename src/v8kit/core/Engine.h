@@ -101,9 +101,11 @@ private:
         std::function<void(void*)> deleter;
     };
 
-    // v8: AlignedPointerInInternalField
-    static constexpr int kInternalFieldCount            = 1;
-    static constexpr int kInternalField_InstancePayload = 0;
+    enum class InternalFieldSolt : int {
+        InstancePayload    = 0, // for InstancePayload(managed Engine、NativeInstance、any flag)
+        ParentClassThisRef = 1, // for ReturnValuePolicy::kReferenceInternal
+        Count,
+    };
 
     v8::Isolate*            isolate_{nullptr};
     v8::Global<v8::Context> context_{};

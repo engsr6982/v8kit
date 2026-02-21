@@ -341,7 +341,10 @@ v8::Local<v8::FunctionTemplate> Engine::newConstructor(ClassMeta const& meta) {
                 }
 
                 auto payload = new InstancePayload{std::move(instance), meta, runtime, constructFromJs};
-                info.This()->SetAlignedPointerInInternalField(kInternalField_InstancePayload, payload);
+                info.This()->SetAlignedPointerInInternalField(
+                    static_cast<int>(InternalFieldSolt::InstancePayload),
+                    payload
+                );
 
                 if (constructFromJs) {
                     runtime->isolate_->AdjustAmountOfExternalAllocatedMemory(
@@ -364,7 +367,7 @@ v8::Local<v8::FunctionTemplate> Engine::newConstructor(ClassMeta const& meta) {
         },
         data
     );
-    ctor->InstanceTemplate()->SetInternalFieldCount(kInternalFieldCount);
+    ctor->InstanceTemplate()->SetInternalFieldCount(static_cast<int>(InternalFieldSolt::Count));
     return ctor;
 }
 
@@ -459,7 +462,9 @@ void Engine::buildInstanceMembers(v8::Local<v8::FunctionTemplate>& obj, ClassMet
             isolate_,
             [](v8::FunctionCallbackInfo<v8::Value> const& info) {
                 auto method  = static_cast<InstanceMemberMeta::Method*>(info.Data().As<v8::External>()->Value());
-                auto payload = info.This()->GetAlignedPointerFromInternalField(kInternalField_InstancePayload);
+                auto payload = info.This()->GetAlignedPointerFromInternalField(
+                    static_cast<int>(InternalFieldSolt::InstancePayload)
+                );
 
                 auto typed  = static_cast<InstancePayload*>(payload);
                 auto engine = const_cast<Engine*>(typed->engine_);
@@ -486,7 +491,9 @@ void Engine::buildInstanceMembers(v8::Local<v8::FunctionTemplate>& obj, ClassMet
             isolate_,
             [](v8::FunctionCallbackInfo<v8::Value> const& info) {
                 auto prop    = static_cast<InstanceMemberMeta::Property*>(info.Data().As<v8::External>()->Value());
-                auto wrapped = info.This()->GetAlignedPointerFromInternalField(kInternalField_InstancePayload);
+                auto wrapped = info.This()->GetAlignedPointerFromInternalField(
+                    static_cast<int>(InternalFieldSolt::InstancePayload)
+                );
 
                 auto typed  = static_cast<InstancePayload*>(wrapped);
                 auto engine = const_cast<Engine*>(typed->engine_);
@@ -506,7 +513,9 @@ void Engine::buildInstanceMembers(v8::Local<v8::FunctionTemplate>& obj, ClassMet
                 isolate_,
                 [](v8::FunctionCallbackInfo<v8::Value> const& info) {
                     auto prop    = static_cast<InstanceMemberMeta::Property*>(info.Data().As<v8::External>()->Value());
-                    auto wrapped = info.This()->GetAlignedPointerFromInternalField(kInternalField_InstancePayload);
+                    auto wrapped = info.This()->GetAlignedPointerFromInternalField(
+                        static_cast<int>(InternalFieldSolt::InstancePayload)
+                    );
 
                     auto typed  = static_cast<InstancePayload*>(wrapped);
                     auto engine = const_cast<Engine*>(typed->engine_);
