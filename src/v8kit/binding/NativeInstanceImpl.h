@@ -119,18 +119,6 @@ createNativeInstance(T&& value, ReturnValuePolicy policy, traits::detail::Resolv
     using RawType     = std::decay_t<T>;
     using ElementType = typename traits::detail::ElementTypeExtractor<RawType>::type;
 
-    // 提取裸指针用于构建 Holder
-    ElementType* rawPtr = nullptr;
-    if constexpr (std::is_pointer_v<RawType>) {
-        rawPtr = value;
-        if (!rawPtr) return nullptr;
-    } else if constexpr (traits::is_unique_ptr_v<RawType> || traits::is_shared_ptr_v<RawType>) {
-        rawPtr = value.get();
-        if (!rawPtr) return nullptr;
-    } else {
-        rawPtr = &value;
-    }
-
     // 辅助创建器，自动推导 Holder 类型
     auto createImpl = [&](auto&& holder) {
         using HolderT = std::decay_t<decltype(holder)>;
@@ -140,6 +128,32 @@ createNativeInstance(T&& value, ReturnValuePolicy policy, traits::detail::Resolv
             std::forward<decltype(holder)>(holder)
         );
     };
+
+    // ----------------
+    // smart pointer
+    // ----------------
+    if constexpr (traits::is_unique_ptr_v<RawType>) {
+        if (policy == ReturnValuePolicy::kCopy) {
+            throw Exception("Cannot copy unique_ptr");
+        }
+        return createImpl(std::forward<T>(value));
+    } else if constexpr (traits::is_shared_ptr_v<RawType>) {
+        return createImpl(std::forward<T>(value));
+    }
+
+
+    // ----------------
+    // raw pointer
+    // ----------------
+
+    // 提取裸指针用于构建 Holder
+    ElementType* rawPtr = nullptr;
+    if constexpr (std::is_pointer_v<RawType>) {
+        rawPtr = value;
+        if (!rawPtr) return nullptr;
+    } else {
+        rawPtr = &value;
+    }
 
     // 根据策略处理对象的所有权和生命周期
     switch (policy) {

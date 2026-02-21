@@ -363,6 +363,10 @@ struct TypeConverter<std::pair<Ty1, Ty2>> {
 //     static std::function<R(Args...)> toCpp(Local<Value> const& value) {}
 // };
 
+// TODO: support smart pointer
+// template <typename T>
+// struct TypeConverter<std::shared_ptr<T>> {};
+
 
 // free functions
 template <typename T>
