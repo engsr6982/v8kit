@@ -104,9 +104,13 @@ struct GenericTypeConverter {
     }
 
     // C++ -> JS
-    static Local<Value> toJs(T&& value, ReturnValuePolicy policy, Local<Value> parent) {
-        using RawType = std::decay_t<T>;
-        policy        = handleAutomaticPolicy<T>(policy);
+    // U is introduced to enable perfect forwarding.
+    // T cannot be used because it is already determined by the enclosing template,
+    // so T&& would be a pure rvalue reference rather than a forwarding reference.
+    template <typename U>
+    static Local<Value> toJs(U&& value, ReturnValuePolicy policy, Local<Value> parent) {
+        using RawType = std::decay_t<U>;
+        policy        = handleAutomaticPolicy<U>(policy);
 
         using ElementType   = typename traits::detail::ElementTypeExtractor<RawType>::type;
         ElementType* rawPtr = nullptr;
@@ -125,7 +129,7 @@ struct GenericTypeConverter {
         auto resolved = traits::detail::resolveCastSource<ElementType>(rawPtr);
 
         // 创建包装着 C++ 实例的底座 (NativeInstance)
-        auto instance = factory::createNativeInstance(std::forward<T>(value), policy, resolved);
+        auto instance = factory::createNativeInstance(std::forward<U>(value), policy, resolved);
         if (!instance) return Null::newNull();
 
         auto&         engine = EngineScope::currentEngineChecked();
@@ -379,7 +383,10 @@ Local<Value> toJs(T&& val, ReturnValuePolicy policy, Local<Value> parent) {
     if constexpr (requires { RawTypeConverter<T>::toJs(std::forward<T>(val), policy, parent); }) {
         return RawTypeConverter<T>::toJs(std::forward<T>(val), policy, parent);
     } else {
-        return toJs(std::forward<T>(val)); // drop policy and parent
+        if constexpr (!requires { RawTypeConverter<T>::toJs(std::forward<T>(val)); }) {
+            static_assert(sizeof(T) == 0, "No suitable toJs converter found for this type.");
+        }
+        return toJs(std::forward<T>(val)); // try drop policy and parent
     }
 }
 
