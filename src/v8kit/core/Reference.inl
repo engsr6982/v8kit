@@ -93,6 +93,17 @@ void Global<T>::reset() {
     handle_.Reset();
     engine_ = nullptr;
 }
+template <typename T>
+void Global<T>::reset(Local<T> const& val) {
+    auto raw = ValueHelper::unwrap(val);
+    if (raw.IsEmpty()) {
+        reset();
+        return;
+    }
+    auto& current = EngineScope::currentRuntimeChecked();
+    handle_.Reset(current.isolate_, raw);
+    engine_ = &current;
+}
 
 
 // Weak<T>
@@ -156,6 +167,18 @@ template <typename T>
 void Weak<T>::reset() {
     handle_.Reset();
     engine_ = nullptr;
+}
+template <typename T>
+void Weak<T>::reset(Local<T> const& val) {
+    auto raw = ValueHelper::unwrap(val);
+    if (raw.IsEmpty()) {
+        reset();
+        return;
+    }
+    auto& current = EngineScope::currentRuntimeChecked();
+    handle_.Reset(current.isolate_, raw);
+    engine_ = &current;
+    markWeak();
 }
 
 template <typename T>

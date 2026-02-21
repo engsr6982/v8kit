@@ -287,6 +287,8 @@ public:
 
     void reset();
 
+    void reset(Local<T> const& val);
+
 private:
     using v8Global = v8::Global<internal::V8Type_v<T>>;
 
@@ -320,6 +322,8 @@ public:
     [[nodiscard]] bool isEmpty() const;
 
     void reset();
+
+    void reset(Local<T> const& val);
 
 private:
     using v8Global = v8::Global<internal::V8Type_v<T>>;
