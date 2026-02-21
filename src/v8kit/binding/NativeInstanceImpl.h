@@ -25,9 +25,7 @@ namespace v8kit::binding {
 template <typename T, typename Holder>
 class NativeInstanceImpl final : public NativeInstance {
 public:
-    using ElementType = typename std::pointer_traits<
-        typename std::conditional<std::is_pointer_v<Holder>, Holder, typename Holder::element_type*>::type>::
-        element_type;
+    using ElementType = typename std::pointer_traits<Holder>::element_type;
 
     Holder value_;
     void*  most_derived_ptr_;
@@ -97,13 +95,16 @@ namespace traits::detail {
 // 专门用于提取 裸指针、值、以及智能指针的底层元素类型
 template <typename U>
 struct ElementTypeExtractor {
-    using type = std::remove_pointer_t<U>;
+    // 去掉引用: const T& -> const T
+    using NoRef = std::remove_reference_t<U>;
+    // 去掉指针: const T* -> const T
+    using type = std::remove_pointer_t<NoRef>;
 };
 
 template <typename U>
     requires traits::is_unique_ptr_v<U> || traits::is_shared_ptr_v<U>
 struct ElementTypeExtractor<U> {
-    using type = typename U::element_type;
+    using type = typename std::remove_reference_t<U>::element_type;
 };
 } // namespace traits::detail
 
@@ -116,8 +117,8 @@ namespace factory {
 template <typename T>
 std::unique_ptr<NativeInstance>
 createNativeInstance(T&& value, ReturnValuePolicy policy, traits::detail::ResolvedCastSource const& resolved) {
-    using RawType     = std::decay_t<T>;
-    using ElementType = typename traits::detail::ElementTypeExtractor<RawType>::type;
+    using BaseT       = std::remove_reference_t<T>;
+    using ElementType = typename traits::detail::ElementTypeExtractor<T>::type;
 
     // 辅助创建器，自动推导 Holder 类型
     auto createImpl = [&](auto&& holder) {
@@ -132,12 +133,12 @@ createNativeInstance(T&& value, ReturnValuePolicy policy, traits::detail::Resolv
     // ----------------
     // smart pointer
     // ----------------
-    if constexpr (traits::is_unique_ptr_v<RawType>) {
+    if constexpr (traits::is_unique_ptr_v<BaseT>) {
         if (policy == ReturnValuePolicy::kCopy) {
             throw Exception("Cannot copy unique_ptr");
         }
         return createImpl(std::forward<T>(value));
-    } else if constexpr (traits::is_shared_ptr_v<RawType>) {
+    } else if constexpr (traits::is_shared_ptr_v<BaseT>) {
         return createImpl(std::forward<T>(value));
     } else { // use else statement to fix C2440
         // ----------------
@@ -145,7 +146,7 @@ createNativeInstance(T&& value, ReturnValuePolicy policy, traits::detail::Resolv
         // ----------------
         // 提取裸指针用于构建 Holder
         ElementType* rawPtr = nullptr;
-        if constexpr (std::is_pointer_v<RawType>) {
+        if constexpr (std::is_pointer_v<BaseT>) {
             rawPtr = value;
             if (!rawPtr) return nullptr;
         } else {
@@ -200,7 +201,7 @@ createNativeInstance(T&& value, ReturnValuePolicy policy, traits::detail::Resolv
             }
 
         case ReturnValuePolicy::kTakeOwnership:
-            if constexpr (std::is_pointer_v<RawType>) {
+            if constexpr (std::is_pointer_v<BaseT>) {
                 return createImpl(std::unique_ptr<ElementType>(value));
             } else {
                 throw Exception("Cannot take ownership of non-pointer");
@@ -215,6 +216,21 @@ createNativeInstance(T&& value, ReturnValuePolicy policy, traits::detail::Resolv
             [[unlikely]] throw Exception("Unknown return value policy");
         }
     }
+}
+
+template <typename T>
+std::unique_ptr<NativeInstance> wrapNativeInstance(std::unique_ptr<T>&& inst) {
+    auto resolve = traits::detail::resolveCastSource(inst.get());
+    // For smart pointers, the ReturnValuePolicy here has no actual effect.
+    return createNativeInstance(std::move(inst), ReturnValuePolicy::kAutomatic, resolve);
+}
+
+template <typename T, typename... Args>
+std::unique_ptr<NativeInstance> newNativeInstance(Args&&... args)
+    requires std::constructible_from<T, Args...>
+{
+    auto inst = std::make_unique<T>(std::forward<Args>(args)...);
+    return wrapNativeInstance(std::move(inst));
 }
 
 

@@ -109,16 +109,18 @@ struct GenericTypeConverter {
     // so T&& would be a pure rvalue reference rather than a forwarding reference.
     template <typename U>
     static Local<Value> toJs(U&& value, ReturnValuePolicy policy, Local<Value> parent) {
-        using RawType = std::decay_t<U>;
-        policy        = handleAutomaticPolicy<U>(policy);
+        policy = handleAutomaticPolicy<U>(policy);
 
-        using ElementType   = typename traits::detail::ElementTypeExtractor<RawType>::type;
+        using ElementType   = typename traits::detail::ElementTypeExtractor<U>::type;
         ElementType* rawPtr = nullptr;
 
-        if constexpr (std::is_pointer_v<RawType>) {
+        // 裸指针/智能指针判定时，需要剥离引用的原始类型(保留 const 语义)
+        using BaseU = std::remove_reference_t<U>;
+
+        if constexpr (std::is_pointer_v<BaseU>) {
             rawPtr = value;
             if (!rawPtr) return Null::newNull();
-        } else if constexpr (traits::is_unique_ptr_v<RawType> || traits::is_shared_ptr_v<RawType>) {
+        } else if constexpr (traits::is_unique_ptr_v<BaseU> || traits::is_shared_ptr_v<BaseU>) {
             rawPtr = value.get();
             if (!rawPtr) return Null::newNull();
         } else {
