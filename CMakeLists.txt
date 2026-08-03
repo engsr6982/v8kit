@@ -50,10 +50,10 @@ target_include_directories(jspp PUBLIC
 target_compile_definitions(jspp PUBLIC "$<$<CONFIG:Debug>:JSPP_DEBUG>")
 
 if(JSPP_EXTERNAL_INC)
-    target_include_directories(jspp PUBLIC ${JSPP_EXTERNAL_INC})
+    target_include_directories(jspp PUBLIC "$<BUILD_INTERFACE:${JSPP_EXTERNAL_INC}>")
 endif()
 if(JSPP_EXTERNAL_LIB)
-    target_link_libraries(jspp PUBLIC ${JSPP_EXTERNAL_LIB})
+    target_link_libraries(jspp PUBLIC "$<BUILD_INTERFACE:${JSPP_EXTERNAL_LIB}>")
 endif()
 
 set(BACKEND_CONFIGURE_FILE "${CMAKE_CURRENT_SOURCE_DIR}/src-${JSPP_BACKEND}/Configure.cmake")
