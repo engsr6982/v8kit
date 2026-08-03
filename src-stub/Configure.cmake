@@ -5,7 +5,9 @@ target_compile_definitions(jspp PUBLIC JSPP_BACKEND_STUB)
 # set source and include directory
 file(GLOB_RECURSE STUB_SRC "src-stub/*.cc")
 target_sources(jspp PRIVATE ${STUB_SRC})
-target_include_directories(jspp PUBLIC "src-stub")
+target_include_directories(jspp PUBLIC
+    "$<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}/src-stub>"
+    "$<INSTALL_INTERFACE:include>")
 
 # TODO: Stub backend, if need to use external library, add here
 # external include
