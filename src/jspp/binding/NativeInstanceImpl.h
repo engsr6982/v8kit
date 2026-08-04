@@ -315,13 +315,9 @@ createNativeInstance(T&& value, ReturnValuePolicy policy, traits::detail::Resolv
         case ReturnValuePolicy::kReferenceInternal:
         case ReturnValuePolicy::kReferencePersistent:
         case ReturnValuePolicy::kReferenceInternalPersistent: {
-            auto inst = createImpl(rawPtr);
-
-            bool canTrack = policy == ReturnValuePolicy::kReference || policy == ReturnValuePolicy::kReferenceInternal;
-            if (canTrack && TransientObjectScope::isActive()) {
-                TransientObjectScope::currentChecked().track(inst.get());
-            }
-            return std::move(inst);
+            // 瞬态作用域跟踪在 TypeConverter::toJs 中进行（需要 wrapper 引用以保活，
+            // 并需要 parent 信息以判定"从瞬态根可达"）
+            return createImpl(rawPtr);
         }
 
         default:

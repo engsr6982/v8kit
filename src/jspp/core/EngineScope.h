@@ -2,6 +2,7 @@
 #include "Fwd.h"
 #include "jspp/Macro.h"
 #include "jspp/core/Concepts.h"
+#include "jspp/core/Reference.h" // Local<Value> (track 保活引用)
 
 #include "jspp-backend/traits/TraitScope.h"
 
@@ -106,10 +107,21 @@ public:
  * 因此为了解决 ReturnValuePolicy::kReference 在回调场景下的安全问题，设计了 `TransientObjectScope`
  *
  * TransientObjectScope 的设计思想是，在进行 onEvent 触发后，在当前栈上创建一个 `TransientObjectScope enter{}`
- * 在 `enter` 作用域内，所有 ReturnValuePolicy 为 kReference 的 NativeInstance 都会被 `TransientObjectScope` 跟踪
- * 当通知脚本回调后，脚本需要立刻处理，如果脚本进行异步回调或者闭包逃逸，在 `enter` 作用域结束后，所有被跟踪的
- * NativeInstance 都会执行 `invalidate` 操作将资源清理，当脚本异步执行（或者访问逃逸资源）时 jspp 会在 unwrap
- * 时抛出异常，从而避免 UAF
+ * 在 `enter` 作用域内，被跟踪的 kReference / kReferenceInternal 包装（wrapper）在作用域退出时会执行
+ * `invalidate` 操作将包装标记为失效，当脚本异步执行（或者访问逃逸资源）时 jspp 会在 unwrap 时抛出异常，
+ * 从而避免 UAF
+ *
+ * @section 跟踪规则（溯源式跟踪）
+ * 并非回调期间创建的所有 kReference 包装都会被跟踪，只有满足以下条件之一才会进入托管：
+ * 1. 瞬态根：parent 为空（例如回调参数本身，由 wrapScriptCallback 以 kReference 转换）；
+ * 2. 派生对象：包装的 parent（thiz）的 NativeInstance 已处于当前作用域的跟踪集合中
+ *    （即"从瞬态根可达"，例如事件对象的子属性）。
+ * 因此，在回调内访问**长期对象**的成员（其 wrapper 创建于瞬态作用域之外，未被跟踪）不会误伤；
+ * 底层 C++ 对象永远不会被此作用域销毁，`invalidate` 仅使对应的 JS 包装失效。
+ *
+ * @section 保活语义
+ * 被跟踪的 wrapper 会在作用域存续期间被持有引用（Local），保证其不会被 JS 引擎提前回收
+ * （QuickJS 引用计数归零即释放）。作用域析构时先执行 `invalidate`，再释放引用。
  *
  * @note 如果一个资源是明确长期有效的，您可以使用 kReferencePersistent 策略，详情见 ReturnValuePolicy 注释
  */
@@ -121,7 +133,9 @@ public:
     TransientObjectScope();
     ~TransientObjectScope();
 
-    void track(NativeInstance* instance);
+    void track(Local<Value> const& wrapper);
+
+    bool contains(NativeInstance const* instance) const;
 
     static bool isActive();
 
@@ -130,8 +144,13 @@ public:
     static TransientObjectScope& currentChecked();
 
 private:
-    std::vector<NativeInstance*> trackedInstances_;
-    TransientObjectScope*        prev_{nullptr};
+    struct TrackedEntry {
+        NativeInstance* instance; // 失效时调用 invalidate（wrapper 被保活，指针必然有效）
+        Local<Value>    wrapper;  // 保活引用：作用域存续期间 wrapper 不会被引擎回收
+    };
+
+    std::vector<TrackedEntry> tracked_;
+    TransientObjectScope*     prev_{nullptr};
 
     static thread_local TransientObjectScope* gCurrentScope_;
 };

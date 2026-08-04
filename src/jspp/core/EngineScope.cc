@@ -1,5 +1,6 @@
 #include "EngineScope.h"
 #include "Engine.h"
+#include "InstancePayload.h"
 #include "NativeInstance.h"
 
 #include <stdexcept>
@@ -76,11 +77,34 @@ thread_local TransientObjectScope* TransientObjectScope::gCurrentScope_ = nullpt
 TransientObjectScope::TransientObjectScope() : prev_(gCurrentScope_) { gCurrentScope_ = this; }
 TransientObjectScope::~TransientObjectScope() {
     gCurrentScope_ = prev_;
-    for (auto instance : trackedInstances_) {
-        instance->invalidate();
+    // 被跟踪的 wrapper 在本作用域存续期间始终被保活（tracked_ 持有引用），
+    // 因此这里的 NativeInstance* 必然有效。先执行 invalidate 标记失效，
+    // tracked_ 成员随后析构，释放保活引用，wrapper 才会被引擎正常回收。
+    for (auto const& entry : tracked_) {
+        entry.instance->invalidate();
     }
 }
-void                  TransientObjectScope::track(NativeInstance* instance) { trackedInstances_.push_back(instance); }
+
+void TransientObjectScope::track(Local<Value> const& wrapper) {
+    auto& engine  = EngineScope::currentEngineChecked();
+    auto* payload = engine.getInstancePayload(wrapper.asObject());
+    if (!payload) [[unlikely]] {
+        throw std::logic_error("TransientObjectScope::track requires a native instance wrapper");
+    }
+    tracked_.emplace_back(TrackedEntry{&payload->getHolder(), wrapper});
+}
+
+bool TransientObjectScope::contains(NativeInstance const* instance) const {
+    for (auto const& entry : tracked_) {
+        if (entry.instance == instance) {
+            return true;
+        }
+    }
+    // 嵌套回调场景：parent 可能由外层作用域跟踪（瞬态根），
+    // 溯源判定需沿作用域链回溯
+    return prev_ != nullptr && prev_->contains(instance);
+}
+
 bool                  TransientObjectScope::isActive() { return gCurrentScope_ != nullptr; }
 TransientObjectScope* TransientObjectScope::current() { return gCurrentScope_; }
 TransientObjectScope& TransientObjectScope::currentChecked() {

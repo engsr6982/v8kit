@@ -154,6 +154,26 @@ struct GenericTypeConverter {
                 throw Exception("Failed to set reference internal");
             }
         }
+
+        // 瞬态作用域（溯源式跟踪）：
+        // 仅跟踪"瞬态根"（parent 为空，如回调参数）或从瞬态根派生的包装
+        // （parent 的 NativeInstance 已在当前作用域的跟踪集合中）。
+        // 在回调内访问长期对象的成员不会被误伤。被跟踪的 wrapper 会被保活
+        // 至作用域结束，避免 QuickJS 引用计数归零提前回收导致悬垂指针。
+        if (policy == ReturnValuePolicy::kReference || policy == ReturnValuePolicy::kReferenceInternal) {
+            if (TransientObjectScope::isActive()) {
+                auto& scope = TransientObjectScope::currentChecked();
+                bool  derivedFromTransient = false;
+                if (parent.isObject()) {
+                    if (auto* parentPayload = engine.getInstancePayload(parent.asObject())) {
+                        derivedFromTransient = scope.contains(&parentPayload->getHolder());
+                    }
+                }
+                if (!parent.isObject() || derivedFromTransient) {
+                    scope.track(jsObj.asValue());
+                }
+            }
+        }
         return jsObj;
     }
 

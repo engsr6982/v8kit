@@ -151,7 +151,7 @@ int main() {
 | `EngineScope`          | 引擎作用域, 在引擎作用域内，可以安全地调用脚本 API。                                                                                      |
 | `ExitEngineScope`      | 引擎退出作用域, 并 unlock 引擎                                                                                                            |
 | `StackFrameScope`      | 脚本调用栈帧作用域，你应该用不到，在某些后端中例如v8需要此作用域显示逃逸值                                                                |
-| `TransientObjectScope` | 瞬态对象作用域，用于保护 `ReturnValuePolicy::kReference` / `ReturnValuePolicy::kReferenceInternal` 对象的生命周期，避免闭包逃逸导致的 UAF |
+| `TransientObjectScope` | 瞬态对象作用域，用于保护 `ReturnValuePolicy::kReference` / `ReturnValuePolicy::kReferenceInternal` 对象的生命周期，避免闭包逃逸导致的 UAF。按"溯源规则"跟踪：仅瞬态根及其派生包装进入托管；回调内访问长期对象成员不受影响 |
 
 #### 异常模型
 
@@ -272,7 +272,7 @@ namespace jspp::binding::traits {
 | `kAutomatic`                   | 当返回值为指针时，回退到 `ReturnValuePolicy::kTakeOwnership`；对于右值引用和左值引用，则分别使用 `ReturnValuePolicy::kMove` 和 `ReturnValuePolicy::kCopy`。各策略的具体行为见下文说明。这是默认策略。                                        |
 | `kCopy`                        | 创建返回对象的新副本，该副本归 Js 所有。此策略相对安全，因为两个实例的生命周期相互解耦。                                                                                                                                                     |
 | `kMove`                        | 使用 `std::move` 将返回值的内容移动到新实例中，新实例归 JS 所有。此策略相对安全，因为源实例（被移动方）和目标实例（接收方）的生命周期相互解耦。                                                                                              |
-| `kReference`                   | 引用现有对象，但不取得其所有权。对象的生命周期管理及不再使用时的内存释放由 C++ 侧负责。(若 C++ 侧销毁了仍被 JS 引用和使用的对象，将导致未定义行为。)当存在 `TransientObjectScope` 时，此策略创建的资源会在 `TransientObjectScope` 退出时销毁 |
+| `kReference`                   | 引用现有对象，但不取得其所有权。对象的生命周期管理及不再使用时的内存释放由 C++ 侧负责。(若 C++ 侧销毁了仍被 JS 引用和使用的对象，将导致未定义行为。)当存在 `TransientObjectScope` 时，此策略创建的资源按**溯源规则**被跟踪：仅瞬态根（parent 为空，如回调参数）或从瞬态根派生的包装（parent 的 NativeInstance 已在作用域跟踪集合中）会在作用域退出时被 invalidate（仅使 JS 包装失效，绝不销毁 C++ 对象）；回调内访问长期对象成员创建的包装不受影响 |
 | `kTakeOwnership`               | 引用现有对象（即不创建新副本）并取得其所有权。 当对象的引用计数归零时，Js 会调用析构函数和 delete 运算符。 若 C++ 侧也执行同样的销毁操作，或数据并非动态分配，将导致未定义行为                                                               |
 | `kReferenceInternal`           | 若返回值是左值引用或指针，父对象（被调用方法 / 属性的 this 参数）会至少保持存活至返回值的生命周期结束,否则此策略会回退到 `ReturnValuePolicy::kMove`。其内部实现与 `ReturnValuePolicy::kReference` 一致                                       |
 | `kReferencePersistent`         | 此策略和 `kReference` 大致相同，唯一的不同是此策略创建的资源不受 TransientObjectScope 的影响。                                                                                                                                               |
