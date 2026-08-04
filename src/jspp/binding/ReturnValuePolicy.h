@@ -48,6 +48,8 @@ enum class ReturnValuePolicy : uint8_t {
      * 其内部实现与 ReturnValuePolicy::kReference 一致，但额外添加了 Global<T>，确保只要返回值还被 JS
      * 引用，父对象就不会被垃圾回收。
      * @note 与 kReference 一样受 TransientObjectScope 的溯源式跟踪约束（见 kReference 注释）。
+     * @note 实例成员指针 prop（`.prop("x", &T::x)`）默认使用此策略：kAutomatic 会被自动升级为
+     *       kReferenceInternal，使类类型成员的引用可写回且宿主被保活；值类型成员不受影响。
      */
     kReferenceInternal = 5,
 

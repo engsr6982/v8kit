@@ -216,6 +216,119 @@ TEST_CASE_METHOD(BugTestFixture, "Bug: transient scope event child must stay poi
 }
 
 
+// ============================================================
+// 成员指针 prop 回归（默认引用语义 / const 解包修复）
+// ============================================================
+
+class PermsPod {
+public:
+    int water{0};
+    int land{0};
+
+    PermsPod() = default;
+    explicit PermsPod(int w) : water(w) {}
+};
+static auto PermsPodMeta = binding::defClass<PermsPod>("PermsPod")
+                               .ctor<int>()
+                               .prop("water", &PermsPod::water)
+                               .build();
+
+class LandTablePod {
+public:
+    PermsPod environment{3};
+    PermsPod role{5};
+    PermsPod readonlyEnv{7};
+
+    LandTablePod() = default;
+};
+static auto LandTablePodMeta = binding::defClass<LandTablePod>("LandTablePod")
+                                   .ctor<>()
+                                   // 成员指针 prop 默认自动升级为 kReferenceInternal：
+                                   // 类类型成员按引用返回，写回生效、宿主保活
+                                   .prop("environment", &LandTablePod::environment)
+                                   .prop("role", &LandTablePod::role)
+                                   // 显式 kCopy：仍为拷贝语义，不写回原成员
+                                   .prop("env_copy", &LandTablePod::environment, binding::ReturnValuePolicy::kCopy)
+                                   // prop_readonly：始终只读
+                                   .prop_readonly("readonlyEnv", &LandTablePod::readonlyEnv)
+                                   .build();
+
+TEST_CASE_METHOD(BugTestFixture, "Bug: member pointer prop should reference nested POD member (write-back)", "[bugs]") {
+    EngineScope lock{*engine};
+    engine->registerClass(PermsPodMeta);
+    engine->registerClass(LandTablePodMeta);
+
+    // 修复前：kAutomatic 解析为 kCopy 且 const 解包 -> 抛 "Object is not copy constructible"
+    auto result = engine->evalScript(String::newString(R"(
+        let t = new LandTablePod();
+        t.environment.water = 42; // 写回宿主成员
+        t.role.water = 99;
+        t.environment.water === 42 && t.role.water === 99;
+    )"));
+    REQUIRE(result.isBoolean());
+    REQUIRE(result.asBoolean().getValue());
+}
+
+TEST_CASE_METHOD(BugTestFixture, "Bug: member pointer prop explicit kCopy must not affect original", "[bugs]") {
+    EngineScope lock{*engine};
+    engine->registerClass(PermsPodMeta);
+    engine->registerClass(LandTablePodMeta);
+
+    // 显式 kCopy：修改作用于拷贝，不影响原成员
+    auto result = engine->evalScript(String::newString(R"(
+        let t = new LandTablePod();
+        t.env_copy.water = 1;
+        t.environment.water === 3;
+    )"));
+    REQUIRE(result.isBoolean());
+    REQUIRE(result.asBoolean().getValue());
+}
+
+// const 宿主（通过 const 引用暴露）-> 子成员包装必须只读
+class ConstHolderPod {
+public:
+    LandTablePod pod_;
+
+    ConstHolderPod() = default;
+    LandTablePod const& getPod() const { return pod_; }
+};
+static auto ConstHolderPodMeta = binding::defClass<ConstHolderPod>("ConstHolderPod")
+                                     .ctor<>()
+                                     .prop("pod", &ConstHolderPod::getPod, nullptr, binding::ReturnValuePolicy::kReference)
+                                     .build();
+
+TEST_CASE_METHOD(BugTestFixture, "Bug: const host must yield read-only member wrapper", "[bugs]") {
+    EngineScope lock{*engine};
+    engine->registerClass(PermsPodMeta);
+    engine->registerClass(LandTablePodMeta);
+    engine->registerClass(ConstHolderPodMeta);
+
+    // 宿主 const -> 成员引用只读，写入必须被拒绝
+    REQUIRE_THROWS_MATCHES(
+        engine->evalScript(String::newString(R"(
+            let h = new ConstHolderPod();
+            h.pod.environment.water = 1;
+        )")),
+        Exception,
+        Catch::Matchers::MessageMatches(Catch::Matchers::ContainsSubstring("Cannot unwrap const instance"))
+    );
+}
+
+TEST_CASE_METHOD(BugTestFixture, "Bug: prop_readonly member pointer must stay read-only", "[bugs]") {
+    EngineScope lock{*engine};
+    engine->registerClass(PermsPodMeta);
+    engine->registerClass(LandTablePodMeta);
+
+    // prop_readonly 强制只读：即使宿主可变，成员引用也必须只读
+    REQUIRE_THROWS_MATCHES(
+        engine->evalScript(String::newString(R"(
+            let t = new LandTablePod();
+            t.readonlyEnv.water = 1;
+        )")),
+        Exception,
+        Catch::Matchers::MessageMatches(Catch::Matchers::ContainsSubstring("Cannot unwrap const instance"))
+    );
+}
 
 
 } // namespace

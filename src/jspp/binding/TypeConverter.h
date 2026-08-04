@@ -1185,15 +1185,36 @@ wrapInstanceAccessor(MemberPtr member, ReturnValuePolicy policy) {
         "Member pointer does not belong to the bound class hierarchy"
     );
 
+    // 实例成员指针 prop 默认采用引用语义：kAutomatic 会把左值引用解析为 kCopy，
+    // 导致类类型成员每次访问都产生拷贝、修改无法写回宿主；而成员引用天然依赖
+    // 宿主存活，kReferenceInternal（引用 + 保活宿主）是符合直觉的默认。
+    // 值类型成员（int/string/enum 等）的转换器忽略策略，不受影响。
+    if (policy == ReturnValuePolicy::kAutomatic) {
+        policy = ReturnValuePolicy::kReferenceInternal;
+    }
+
     InstanceGetterCallback getter = [member,
                                      policy](InstancePayload& payload, Arguments const& arguments) -> Local<Value> {
-        auto           inst  = payload.unwrap<const C>();
-        decltype(auto) value = inst->*member;
-        return toJs(
-            std::forward<decltype(value)>(value),
-            policy,
-            arguments.hasThiz() ? arguments.thiz() : Local<Value>{}
-        );
+        // 按宿主可变性解包：宿主可变且非只读 prop 时返回成员的可变引用（写回生效）；
+        // 宿主为 const 或 prop_readonly 时返回 const 引用（只读）。
+        // 成员自身声明为 const（const T C::*）时，const 语义由类型系统自动传播。
+        if (forceReadonly || payload.getHolder().is_const()) {
+            auto constInst = payload.unwrap<const C>();
+            decltype(auto) value = constInst->*member;
+            return toJs(
+                std::forward<decltype(value)>(value),
+                policy,
+                arguments.hasThiz() ? arguments.thiz() : Local<Value>{}
+            );
+        } else {
+            auto inst = payload.unwrap<C>();
+            decltype(auto) value = inst->*member;
+            return toJs(
+                std::forward<decltype(value)>(value),
+                policy,
+                arguments.hasThiz() ? arguments.thiz() : Local<Value>{}
+            );
+        }
     };
     InstanceSetterCallback setter = nullptr;
     if constexpr (!Traits::isConst && !forceReadonly) {
