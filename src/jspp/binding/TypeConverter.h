@@ -162,7 +162,7 @@ struct GenericTypeConverter {
         // 至作用域结束，避免 QuickJS 引用计数归零提前回收导致悬垂指针。
         if (policy == ReturnValuePolicy::kReference || policy == ReturnValuePolicy::kReferenceInternal) {
             if (TransientObjectScope::isActive()) {
-                auto& scope = TransientObjectScope::currentChecked();
+                auto& scope                = TransientObjectScope::currentChecked();
                 bool  derivedFromTransient = false;
                 if (parent.isObject()) {
                     if (auto* parentPayload = engine.getInstancePayload(parent.asObject())) {
@@ -652,8 +652,9 @@ decltype(auto) toCpp(Local<Value> const& value) {
                 "toCpp<T> with polymorphic T by value is forbidden (slicing UB). Use T&, const T&, or T* instead."
             );
             if constexpr (!is_conv_ptr && !is_conv_lref) {
-                if constexpr (std::is_same_v<RawConvRet, BareT>
-                              || internal::CppValueTypeTransformer_v<RawConvRet, BareT>) {
+                if constexpr (
+                    std::is_same_v<RawConvRet, BareT> || internal::CppValueTypeTransformer_v<RawConvRet, BareT>
+                ) {
                     return Conv::toCpp(value);
                 } else {
                     static_assert(
@@ -810,8 +811,7 @@ FunctionCallback wrapOverloadFuncAndExtraPolicy(Overload&&... fn) {
                     policy = arg;
                 }
             }(fn),
-            ...
-        );
+            ...);
     }
 
     constexpr size_t func_count = sizeof...(Overload) - policy_count;
@@ -826,8 +826,7 @@ FunctionCallback wrapOverloadFuncAndExtraPolicy(Overload&&... fn) {
                     arr[idx++] = wrapFunction(std::forward<decltype(arg)>(arg), policy);
                 }
             }(std::forward<Overload>(fn)),
-            ...
-        );
+            ...);
         return arr;
     }();
 
@@ -941,39 +940,108 @@ InstanceMethodCallback wrapInstanceMethod(Fn&& fn, ReturnValuePolicy policy) {
             using R     = typename Trait::ReturnType;
             using Tuple = typename Trait::ArgsTuple;
 
-            constexpr size_t ArgsCount = Trait::ArgsCount;
-            if (args.length() != ArgsCount) [[unlikely]] {
-                throw Exception("argument count mismatch", Exception::Type::TypeError);
-            }
+            if constexpr (std::is_member_function_pointer_v<Fn>) {
+                // ---------------- 成员函数指针 ----------------
+                constexpr size_t ArgsCount = Trait::ArgsCount;
+                if (args.length() != ArgsCount) [[unlikely]] {
+                    throw Exception("argument count mismatch", Exception::Type::TypeError);
+                }
 
-            using UnwrapC = std::conditional_t<Trait::isConst, const C, C>;
-            UnwrapC* inst = payload.unwrap<UnwrapC>();
+                using UnwrapC = std::conditional_t<Trait::isConst, const C, C>;
+                UnwrapC* inst = payload.unwrap<UnwrapC>();
 
-            if constexpr (std::is_void_v<R>) {
-                std::apply(
-                    [inst, &f](auto&&... unpackedArgs) {
-                        (inst->*f)(std::forward<decltype(unpackedArgs)>(unpackedArgs)...);
-                    },
-                    ConvertArgsToTuple<Tuple>(args, std::make_index_sequence<ArgsCount>())
-                );
-                return {}; // undefined
-            } else {
-                decltype(auto) ret = std::apply(
-                    [inst, &f](auto&&... unpackedArgs) -> R {
-                        return (inst->*f)(std::forward<decltype(unpackedArgs)>(unpackedArgs)...);
-                    },
-                    ConvertArgsToTuple<Tuple>(args, std::make_index_sequence<ArgsCount>())
-                );
-                // 特殊情况，对于 Builder 模式，返回 this
-                if constexpr (std::is_same_v<R, C&>) {
-                    assert(args.hasThiz() && "this is required for Builder pattern");
-                    return args.thiz();
-                } else {
-                    return toJs(
-                        std::forward<decltype(ret)>(ret),
-                        policy,
-                        args.hasThiz() ? args.thiz() : Local<Value>{}
+                if constexpr (std::is_void_v<R>) {
+                    std::apply(
+                        [inst, &f](auto&&... unpackedArgs) {
+                            (inst->*f)(std::forward<decltype(unpackedArgs)>(unpackedArgs)...);
+                        },
+                        ConvertArgsToTuple<Tuple>(args, std::make_index_sequence<ArgsCount>())
                     );
+                    return {}; // undefined
+                } else {
+                    decltype(auto) ret = std::apply(
+                        [inst, &f](auto&&... unpackedArgs) -> R {
+                            return (inst->*f)(std::forward<decltype(unpackedArgs)>(unpackedArgs)...);
+                        },
+                        ConvertArgsToTuple<Tuple>(args, std::make_index_sequence<ArgsCount>())
+                    );
+                    // 特殊情况，对于 Builder 模式，返回 this
+                    if constexpr (std::is_same_v<R, C&>) {
+                        assert(args.hasThiz() && "this is required for Builder pattern");
+                        return args.thiz();
+                    } else {
+                        return toJs(
+                            std::forward<decltype(ret)>(ret),
+                            policy,
+                            args.hasThiz() ? args.thiz() : Local<Value>{}
+                        );
+                    }
+                }
+            } else {
+                // ---------------- 自由函数 / lambda ----------------
+                // 签名约定：第一参数为实例 (C& / const C& / C* / const C*)，其余为方法参数
+                static_assert(
+                    Trait::ArgsCount >= 1,
+                    "Non-member method must take the bound instance as its first argument"
+                );
+                using Arg0 = std::tuple_element_t<0, Tuple>;
+                static_assert(
+                    std::is_same_v<traits::RawType_t<Arg0>, C>,
+                    "First argument of non-member method must match the bound class. "
+                    "Expected instance of C&, C*, const C&, or const C*."
+                );
+                static_assert(
+                    !(std::is_polymorphic_v<C> && !std::is_lvalue_reference_v<Arg0> && !std::is_pointer_v<Arg0>),
+                    "Pass-by-value of a polymorphic type is not allowed (slicing risk). Use C&, const C&, or C* "
+                    "instead."
+                );
+
+                constexpr size_t ArgCount = Trait::ArgsCount - 1; // JS 侧参数个数（不含 self）
+                if (args.length() != ArgCount) [[unlikely]] {
+                    throw Exception("argument count mismatch", Exception::Type::TypeError);
+                }
+
+                // 从第一参数的类型推导宿主可变性（与 wrapInstanceGetter 的 non-member 分支一致）
+                using UnwrapC = std::
+                    conditional_t<std::is_const_v<std::remove_pointer_t<std::remove_reference_t<Arg0>>>, const C, C>;
+                UnwrapC* inst = payload.unwrap<UnwrapC>();
+
+                // 偏移参数转换：args[i] -> tuple_element_t<i + 1, Tuple>（跳过 self）
+                auto convertRest = [&]<std::size_t... Is>(std::index_sequence<Is...>) {
+                    using SafeTuple = std::tuple<StorageType_t<std::tuple_element_t<Is + 1, Tuple>>...>;
+                    return SafeTuple{toCpp<std::tuple_element_t<Is + 1, Tuple>>(args[Is])...};
+                };
+                auto rest = convertRest(std::make_index_sequence<ArgCount>());
+
+                auto invoke = [&](auto&&... restArgs) -> R {
+                    if constexpr (std::is_pointer_v<Arg0>) {
+                        return f(inst, std::forward<decltype(restArgs)>(restArgs)...);
+                    } else {
+                        if (inst == nullptr) [[unlikely]] {
+                            throw std::runtime_error(
+                                "Cannot invoke method: instance is null when passing by reference"
+                            );
+                        }
+                        return f(*inst, std::forward<decltype(restArgs)>(restArgs)...);
+                    }
+                };
+
+                if constexpr (std::is_void_v<R>) {
+                    std::apply(invoke, std::move(rest));
+                    return {}; // undefined
+                } else {
+                    decltype(auto) ret = std::apply(invoke, std::move(rest));
+                    // Builder 模式：lambda 返回 C& 时返回 thiz
+                    if constexpr (std::is_same_v<R, C&>) {
+                        assert(args.hasThiz() && "this is required for Builder pattern");
+                        return args.thiz();
+                    } else {
+                        return toJs(
+                            std::forward<decltype(ret)>(ret),
+                            policy,
+                            args.hasThiz() ? args.thiz() : Local<Value>{}
+                        );
+                    }
                 }
             }
         };
@@ -1000,8 +1068,7 @@ InstanceMethodCallback wrapOverloadMethodAndExtraPolicy(Overload&&... fn) {
                     policy = arg;
                 }
             }(fn),
-            ...
-        );
+            ...);
     }
 
     constexpr size_t func_count = sizeof...(Overload) - policy_count;
@@ -1016,8 +1083,7 @@ InstanceMethodCallback wrapOverloadMethodAndExtraPolicy(Overload&&... fn) {
                     arr[idx++] = wrapInstanceMethod<C>(std::forward<decltype(arg)>(arg), policy);
                 }
             }(std::forward<Overload>(fn)),
-            ...
-        );
+            ...);
         return arr;
     }();
     return _mergeMethodCallbacks(std::move(overloads));
@@ -1199,15 +1265,15 @@ wrapInstanceAccessor(MemberPtr member, ReturnValuePolicy policy) {
         // 宿主为 const 或 prop_readonly 时返回 const 引用（只读）。
         // 成员自身声明为 const（const T C::*）时，const 语义由类型系统自动传播。
         if (forceReadonly || payload.getHolder().is_const()) {
-            auto constInst = payload.unwrap<const C>();
-            decltype(auto) value = constInst->*member;
+            auto           constInst = payload.unwrap<const C>();
+            decltype(auto) value     = constInst->*member;
             return toJs(
                 std::forward<decltype(value)>(value),
                 policy,
                 arguments.hasThiz() ? arguments.thiz() : Local<Value>{}
             );
         } else {
-            auto inst = payload.unwrap<C>();
+            auto           inst  = payload.unwrap<C>();
             decltype(auto) value = inst->*member;
             return toJs(
                 std::forward<decltype(value)>(value),

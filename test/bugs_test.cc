@@ -331,4 +331,108 @@ TEST_CASE_METHOD(BugTestFixture, "Bug: prop_readonly member pointer must stay re
 }
 
 
+// ============================================================
+// const& 返回 + kCopy / lambda method 绑定 回归
+// ============================================================
+
+// 业务场景：POD 对象以 const& 返回，绑定层应拷贝出可变副本
+class LandPerm {
+public:
+    int water{0};
+    int land{0};
+
+    LandPerm() = default;
+    explicit LandPerm(int w) : water(w) {}
+};
+static auto LandPermMeta = binding::defClass<LandPerm>("LandPerm")
+                               .ctor<int>()
+                               .prop("water", &LandPerm::water)
+                               .build();
+
+class Land {
+public:
+    LandPerm table_{11};
+
+    Land() = default;
+    explicit Land(int w) : table_(w) {}
+    LandPerm const& getPermTable() const { return table_; }
+};
+static auto LandMeta = binding::defClass<Land>("Land")
+                           .ctor<int>()
+                           // 成员函数指针 + 显式 kCopy：const& 返回 -> 可变副本（修复：kCopy 剥离 const）
+                           .method("getTableCopy", &Land::getPermTable, binding::ReturnValuePolicy::kCopy)
+                           // lambda 绑定 + kCopy：const& 返回 -> 可变副本（修复：method 支持 lambda）
+                           .method(
+                               "getTableLambda",
+                               [](Land& self) -> LandPerm const& { return self.getPermTable(); },
+                               binding::ReturnValuePolicy::kCopy
+                           )
+                           // lambda 绑定 + 默认策略：按值返回 -> kAutomatic 解析为 kCopy（修复：按值默认拷贝）
+                           .method("getTableValue", [](Land& self) -> LandPerm {
+                               return LandPerm{self.getPermTable().water + 1};
+                           })
+                           // lambda 绑定 + 参数（void 分支）
+                           .method("setWater", [](Land& self, int w) { self.table_.water = w; })
+                           // lambda builder 特判：返回 C& 时返回 thiz
+                           .method("self", [](Land& self) -> Land& { return self; })
+                           .build();
+
+TEST_CASE_METHOD(BugTestFixture, "Bug: const-ref + kCopy must produce mutable copy", "[bugs]") {
+    EngineScope lock{*engine};
+    engine->registerClass(LandPermMeta);
+    engine->registerClass(LandMeta);
+
+    // 修复前：const LandPerm& + kCopy -> ElementType 带 const -> 抛 "Object is not copy constructible"
+    auto result = engine->evalScript(String::newString(R"(
+        let l = new Land(5);
+        let t = l.getTableCopy();
+        t.water = 42;                 // 副本必须可写
+        l.getTableCopy().water === 5; // 原对象不变（副本独立）
+    )"));
+    REQUIRE(result.isBoolean());
+    REQUIRE(result.asBoolean().getValue());
+}
+
+TEST_CASE_METHOD(BugTestFixture, "Bug: lambda method binding (const-ref kCopy / by-value automatic / args)", "[bugs]") {
+    EngineScope lock{*engine};
+    engine->registerClass(LandPermMeta);
+    engine->registerClass(LandMeta);
+
+    // 修复前：.method 模板按成员函数指针展开（(inst->*f)），lambda 无法编译
+    // 各段脚本用 IIFE 包裹，避免共享全局作用域导致 let 重复声明
+    // lambda + const& 返回 + kCopy -> 可变副本
+    REQUIRE_NOTHROW(engine->evalScript(String::newString(R"(
+        (() => {
+            let l = new Land(7);
+            let t = l.getTableLambda();
+            t.water = 42;
+            return t.water === 42;
+        })()
+    )")));
+    // lambda + 按值返回 + 默认策略 -> kAutomatic 解析为 kCopy
+    REQUIRE_NOTHROW(engine->evalScript(String::newString(R"(
+        (() => {
+            let l = new Land(7);
+            let v = l.getTableValue();
+            return v.water === 8;
+        })()
+    )")));
+    // lambda + 参数（void 分支，写回宿主）
+    REQUIRE_NOTHROW(engine->evalScript(String::newString(R"(
+        (() => {
+            let l = new Land(7);
+            l.setWater(9);
+            return l.getTableCopy().water === 9;
+        })()
+    )")));
+    // builder 特判：lambda 返回 C& -> thiz
+    REQUIRE_NOTHROW(engine->evalScript(String::newString(R"(
+        (() => {
+            let l = new Land(7);
+            return l.self() === l;
+        })()
+    )")));
+}
+
+
 } // namespace

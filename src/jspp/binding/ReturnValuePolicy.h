@@ -3,12 +3,15 @@
 
 #include <type_traits>
 
+#include "traits/TypeTraits.h"
+
 namespace jspp::binding {
 
 enum class ReturnValuePolicy : uint8_t {
     /**
      * 当返回值为指针时，回退到 ReturnValuePolicy::kTakeOwnership；
-     * 对于右值引用和左值引用，则分别使用 ReturnValuePolicy::kMove 和 ReturnValuePolicy::kCopy。
+     * 对于右值引用和左值引用，则分别使用 ReturnValuePolicy::kMove 和 ReturnValuePolicy::kCopy；
+     * 按值返回时使用 ReturnValuePolicy::kCopy（默认拷贝语义）。
      * 各策略的具体行为见下文说明。这是默认策略。
      */
     kAutomatic = 0,
@@ -81,10 +84,12 @@ ReturnValuePolicy resolveAutomaticPolicy(ReturnValuePolicy policy) {
     if (policy == ReturnValuePolicy::kAutomatic) {
         if constexpr (std::is_pointer_v<T>) {
             return ReturnValuePolicy::kTakeOwnership;
-        } else if constexpr (std::is_lvalue_reference_v<T>) {
-            return ReturnValuePolicy::kCopy;
         } else if constexpr (std::is_rvalue_reference_v<T>) {
             return ReturnValuePolicy::kMove;
+        } else if constexpr (!traits::is_unique_ptr_v<T> && !traits::is_shared_ptr_v<T>) {
+            // 左值引用与按值返回（非智能指针）：默认拷贝语义（创建独立副本，归 JS 所有）。
+            // 智能指针保持 kAutomatic，由 createNativeInstance 的智能指针分支自行处理所有权
+            return ReturnValuePolicy::kCopy;
         }
     }
     return policy;

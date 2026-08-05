@@ -215,11 +215,15 @@ std::unique_ptr<NativeInstance>
 createNativeInstance(T&& value, ReturnValuePolicy policy, traits::detail::ResolvedCastSource const& resolved) {
     using BaseT       = std::remove_reference_t<T>;
     using ElementType = typename traits::detail::ElementTypeExtractor<T>::type;
+    // 拷贝/移动创建独立副本：副本不继承源的 const 语义（const 是源对象的属性），
+    // 引用类策略（kReference 系列）仍保留 const。
+    using CopyElementT = std::remove_const_t<ElementType>;
 
     // Helper creator, automatically deduces Holder type
     auto createImpl = [&](auto&& holder) {
-        using HolderT = std::decay_t<decltype(holder)>;
-        return std::make_unique<PointerNativeInstance<ElementType, HolderT>>(
+        using HolderT      = std::decay_t<decltype(holder)>;
+        using InstElementT = typename std::pointer_traits<HolderT>::element_type;
+        return std::make_unique<PointerNativeInstance<InstElementT, HolderT>>(
             resolved.meta,
             std::forward<decltype(holder)>(holder),
             const_cast<void*>(resolved.ptr)
@@ -266,13 +270,14 @@ createNativeInstance(T&& value, ReturnValuePolicy policy, traits::detail::Resolv
                     throw std::logic_error("Failed to upcast cloned polymorphic object to base type");
                 }
                 ElementType* finalPtr = static_cast<ElementType*>(base);
-                return createImpl(std::unique_ptr<ElementType>(finalPtr));
+                // cloned 来自 copyCloneCtor（new T，可变），const_cast 安全
+                return createImpl(std::unique_ptr<CopyElementT>(const_cast<CopyElementT*>(finalPtr)));
             }
             // Non-polymorphic type
-            if constexpr (isInlineOptimizable_v<ElementType>) {
-                return std::make_unique<ValueNativeInstance<ElementType>>(resolved.meta, *rawPtr); // SOO
-            } else if constexpr (std::is_copy_constructible_v<ElementType>) {
-                return createImpl(std::make_unique<ElementType>(*rawPtr));
+            if constexpr (isInlineOptimizable_v<CopyElementT>) {
+                return std::make_unique<ValueNativeInstance<CopyElementT>>(resolved.meta, *rawPtr); // SOO
+            } else if constexpr (std::is_copy_constructible_v<CopyElementT>) {
+                return createImpl(std::make_unique<CopyElementT>(*rawPtr));
             } else {
                 [[unlikely]] throw std::logic_error("Object is not copy constructible");
             }
@@ -293,13 +298,13 @@ createNativeInstance(T&& value, ReturnValuePolicy policy, traits::detail::Resolv
                     throw std::logic_error("Failed to upcast cloned polymorphic object to base type");
                 }
                 ElementType* finalPtr = static_cast<ElementType*>(base);
-                return createImpl(std::unique_ptr<ElementType>(finalPtr));
+                return createImpl(std::unique_ptr<CopyElementT>(const_cast<CopyElementT*>(finalPtr)));
             }
             // Non-polymorphic type
-            if constexpr (isInlineOptimizable_v<ElementType>) {
-                return std::make_unique<ValueNativeInstance<ElementType>>(resolved.meta, std::move(*rawPtr)); // SOO
-            } else if constexpr (std::is_move_constructible_v<ElementType>) {
-                return createImpl(std::make_unique<ElementType>(std::move(*rawPtr)));
+            if constexpr (isInlineOptimizable_v<CopyElementT>) {
+                return std::make_unique<ValueNativeInstance<CopyElementT>>(resolved.meta, std::move(*rawPtr)); // SOO
+            } else if constexpr (std::is_move_constructible_v<CopyElementT>) {
+                return createImpl(std::make_unique<CopyElementT>(std::move(*rawPtr)));
             } else {
                 [[unlikely]] throw std::logic_error("Object is not move constructible");
             }
