@@ -111,7 +111,7 @@ int main() {
 | Node.js Addon                        | 扩展   | Node.js 所有       | ✅ 支持     | 需要设置初始化标志 `V8InitializeFlags::AddonMode`                                                                                                                                                                                     |
 | QuickJS 原生模块                     | 扩展   | 宿主所有           | ✅ 支持     | 需要设置初始化标志 `QjsInitializeFlags::AddonMode` <br/> ⚠️需注意编译指令以及 ABI 问题                                                                                                                                                |
 | QuickJS 原生模块(宿主使用 jspp)      | 扩展   | 宿主的 jspp 所有   | ✅ 支持     | 需要设置初始化标志 `QjsInitializeFlags::AddonMode` <br/> ⚠️需注意编译指令以及 ABI 问题                                                                                                                                                |
-| QuickJS 原生模块(宿主使用其它绑定库) | 扩展   | 宿主所有           | ✅ 支持     | 需要设置初始化标志 `QjsInitializeFlags::AddonMode` <br/> ⚠️需注意编译指令以及 ABI 问题 <br/> 仅测试与 ScriptX 的兼容性，其它库理论上没问题                                                                                            |
+| QuickJS 原生模块(宿主使用其它绑定库) | 扩展   | 宿主所有           | ✅ 支持     | 需要设置初始化标志 `QjsInitializeFlags::AddonMode` <br/> ⚠️需注意编译指令以及 ABI 问题 <br/> 已测试与 ScriptX 的兼容性；⚠️ 若宿主绑定接口依赖其绑定库的 `EngineScope` (TLS 作用域链) 获取引擎且不判空，则在未压入 `EngineScope` 的调用路径上会因空指针访问而崩溃，其它绑定库同理                                                                                            |
 
 ## ⚙️ 内部实现
 
