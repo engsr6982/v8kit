@@ -144,6 +144,7 @@ Local<Function> Function::newFunction(FunctionCallback&& cb) {
 
             auto callback = static_cast<FunctionCallback*>(JS_GetOpaque(data[1], engine->functionDataClassId_));
 
+            EngineScope tracker{engine}; // for addon
             try {
                 auto args   = qjs_backend::QjsHelper::wrapArguments(engine, thiz, argc, argv);
                 auto result = (*callback)(args);
